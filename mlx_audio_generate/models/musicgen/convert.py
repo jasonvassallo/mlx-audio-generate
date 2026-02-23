@@ -18,7 +18,11 @@ from pathlib import Path
 
 import numpy as np
 
-from mlx_audio_generate.shared.hub import download_model, load_safetensors, save_safetensors
+from mlx_audio_generate.shared.hub import (
+    download_model,
+    load_safetensors,
+    save_safetensors,
+)
 
 
 def _remap_t5_key(k: str) -> str:
@@ -89,10 +93,10 @@ def _remap_decoder_key(k: str) -> str:
     """
     # Strip decoder.model.decoder. prefix for transformer layers
     if k.startswith("decoder.model.decoder."):
-        k = k[len("decoder.model.decoder."):]
+        k = k[len("decoder.model.decoder.") :]
     # Strip decoder. prefix for lm_heads
     elif k.startswith("decoder.lm_heads."):
-        k = k[len("decoder."):]
+        k = k[len("decoder.") :]
     # enc_to_dec_proj stays as-is (already matches our attribute name)
 
     return k
@@ -126,6 +130,7 @@ def convert_musicgen(
     if not sf_file.exists():
         # Some models may have sharded safetensors
         import glob
+
         sf_files = sorted(glob.glob(str(model_path / "model*.safetensors")))
         if not sf_files:
             raise FileNotFoundError(
@@ -160,7 +165,7 @@ def convert_musicgen(
     for k, val in weights.items():
         # --- T5 Text Encoder ---
         if k.startswith("text_encoder."):
-            clean_k = k[len("text_encoder."):]
+            clean_k = k[len("text_encoder.") :]
             clean_k = _remap_t5_key(clean_k)
             t5_state[clean_k] = val
             continue
@@ -172,10 +177,7 @@ def convert_musicgen(
             continue
 
         # --- Decoder (transformer + embed_tokens + lm_heads) ---
-        if (
-            k.startswith("decoder.model.decoder.")
-            or k.startswith("decoder.lm_heads.")
-        ):
+        if k.startswith("decoder.model.decoder.") or k.startswith("decoder.lm_heads."):
             clean_k = _remap_decoder_key(k)
             decoder_state[clean_k] = val
             continue
@@ -207,7 +209,7 @@ def convert_musicgen(
                     d[k] = d[k].astype(np_dtype)
 
     # Save split files
-    print(f"\nConverted weights:")
+    print("\nConverted weights:")
     print(f"  T5 encoder:     {len(t5_state)} tensors")
     print(f"  Decoder:        {len(decoder_state)} tensors")
     print(f"  Audio encoder:  {skipped_audio} tensors (skipped, loaded separately)")

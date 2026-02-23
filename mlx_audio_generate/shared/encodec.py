@@ -532,9 +532,7 @@ class EncodecModel(nn.Module):
         scale = None
         if self.config.normalize:
             input_values = input_values * padding_mask[..., None]
-            mono = (
-                mx.sum(input_values, axis=2, keepdims=True) / input_values.shape[2]
-            )
+            mono = mx.sum(input_values, axis=2, keepdims=True) / input_values.shape[2]
             scale = mono.square().mean(axis=1, keepdims=True).sqrt() + 1e-8
             input_values = input_values / scale
 
@@ -568,9 +566,7 @@ class EncodecModel(nn.Module):
 
         _, input_length, channels = input_values.shape
         if channels < 1 or channels > 2:
-            raise ValueError(
-                f"Audio channels must be 1 or 2, got {channels}"
-            )
+            raise ValueError(f"Audio channels must be 1 or 2, got {channels}")
 
         chunk_length = self.chunk_length
         if chunk_length is None:

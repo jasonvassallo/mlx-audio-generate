@@ -1,12 +1,17 @@
 from .audio_io import load_wav, play_audio, save_wav
-from .hub import download_model, load_all_safetensors, load_safetensors, save_safetensors
+from .encodec import EncodecModel, preprocess_audio
+from .hub import (
+    download_model,
+    load_all_safetensors,
+    load_safetensors,
+    save_safetensors,
+)
 from .mlx_utils import (
     fuse_weight_norm,
     remap_key,
     transpose_conv1d_weight,
     transpose_conv_transpose1d_weight,
 )
-from .encodec import EncodecModel, preprocess_audio
 from .t5 import T5Config, T5EncoderModel
 
 __all__ = [

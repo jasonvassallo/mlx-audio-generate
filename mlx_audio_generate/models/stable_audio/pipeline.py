@@ -14,14 +14,13 @@ from typing import Optional
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
 from transformers import AutoTokenizer
 
-from mlx_audio_generate.shared.hub import download_model, load_safetensors
+from mlx_audio_generate.shared.hub import load_safetensors
 from mlx_audio_generate.shared.t5 import T5Config, T5EncoderModel
 
 from .conditioners import Conditioners
-from .config import DiTConfig, OobleckConfig, StableAudioConfig
+from .config import StableAudioConfig
 from .dit import StableAudioDiT
 from .sampling import get_rf_schedule, sample_euler, sample_rk4
 from .vae import AutoencoderOobleck
@@ -86,9 +85,7 @@ class StableAudioPipeline:
         print("Loading DiT...")
         dit = StableAudioDiT(config.dit)
         dit_weights = load_safetensors(weights_path / "dit.safetensors")
-        dit.load_weights(
-            list((k, mx.array(v)) for k, v in dit_weights.items())
-        )
+        dit.load_weights(list((k, mx.array(v)) for k, v in dit_weights.items()))
         nn.eval(dit)
 
         # Build and load T5
@@ -103,9 +100,7 @@ class StableAudioPipeline:
         print("Loading conditioners...")
         conditioners = Conditioners(t5, tokenizer)
         cond_weights = load_safetensors(weights_path / "conditioners.safetensors")
-        conditioners.load_weights(
-            {k: mx.array(v) for k, v in cond_weights.items()}
-        )
+        conditioners.load_weights({k: mx.array(v) for k, v in cond_weights.items()})
 
         print("Pipeline ready.")
         return cls(vae, dit, conditioners, config)
@@ -209,10 +204,9 @@ def _load_t5_config(weights_path: Path) -> T5Config:
     if t5_config_file.exists():
         with open(t5_config_file) as f:
             data = json.load(f)
-        return T5Config(**{
-            k: v for k, v in data.items()
-            if k in T5Config.__dataclass_fields__
-        })
+        return T5Config(
+            **{k: v for k, v in data.items() if k in T5Config.__dataclass_fields__}
+        )
     return T5Config()
 
 
@@ -230,9 +224,7 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
     # Both stable-audio-open-small and 1.0 use the same T5 tokenizer
     for source in [repo_id, "stabilityai/stable-audio-open-1.0"]:
         try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                source, subfolder="tokenizer"
-            )
+            tokenizer = AutoTokenizer.from_pretrained(source, subfolder="tokenizer")
             tokenizer.save_pretrained(str(weights_path))
             print(f"Saved tokenizer to {weights_path}")
             return tokenizer

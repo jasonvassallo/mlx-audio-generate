@@ -3,7 +3,7 @@
 Reads the nested HuggingFace config.json format with three sub-configs:
   - text_encoder (T5): d_model, num_heads, num_layers, d_ff, d_kv, vocab_size
   - decoder: hidden_size, num_hidden_layers, num_attention_heads, ffn_dim, num_codebooks
-  - audio_encoder (EnCodec): codebook_size, sampling_rate, num_codebooks, upsampling_ratios
+  - audio_encoder (EnCodec): codebook_size, sampling_rate, num_codebooks
 """
 
 import inspect
@@ -30,7 +30,8 @@ class DecoderConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "DecoderConfig":
-        return cls(**{k: v for k, v in d.items() if k in inspect.signature(cls).parameters})
+        valid = inspect.signature(cls).parameters
+        return cls(**{k: v for k, v in d.items() if k in valid})
 
 
 @dataclass
@@ -67,7 +68,8 @@ class AudioEncoderConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "AudioEncoderConfig":
-        return cls(**{k: v for k, v in d.items() if k in inspect.signature(cls).parameters})
+        valid = inspect.signature(cls).parameters
+        return cls(**{k: v for k, v in d.items() if k in valid})
 
 
 @dataclass
@@ -90,7 +92,8 @@ class TextEncoderConfig:
         mapped = dict(d)
         if "_name_or_path" in mapped:
             mapped["model_name_or_path"] = mapped.pop("_name_or_path")
-        return cls(**{k: v for k, v in mapped.items() if k in inspect.signature(cls).parameters})
+        valid = inspect.signature(cls).parameters
+        return cls(**{k: v for k, v in mapped.items() if k in valid})
 
 
 @dataclass
@@ -110,4 +113,8 @@ class MusicGenConfig:
         decoder = DecoderConfig.from_dict(d.get("decoder", {}))
         audio_encoder = AudioEncoderConfig.from_dict(d.get("audio_encoder", {}))
         text_encoder = TextEncoderConfig.from_dict(d.get("text_encoder", {}))
-        return cls(decoder=decoder, audio_encoder=audio_encoder, text_encoder=text_encoder)
+        return cls(
+            decoder=decoder,
+            audio_encoder=audio_encoder,
+            text_encoder=text_encoder,
+        )

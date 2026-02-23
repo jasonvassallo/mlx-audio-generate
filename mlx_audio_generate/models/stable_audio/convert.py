@@ -21,7 +21,11 @@ from pathlib import Path
 
 import numpy as np
 
-from mlx_audio_generate.shared.hub import download_model, load_safetensors, save_safetensors
+from mlx_audio_generate.shared.hub import (
+    download_model,
+    load_safetensors,
+    save_safetensors,
+)
 from mlx_audio_generate.shared.mlx_utils import (
     fuse_weight_norm,
     transpose_conv1d_weight,
@@ -191,14 +195,18 @@ def convert_stable_audio(
 
     # Optional dtype cast
     if dtype is not None:
-        np_dtype = {"float16": np.float16, "bfloat16": np.float16, "float32": np.float32}[dtype]
+        np_dtype = {
+            "float16": np.float16,
+            "bfloat16": np.float16,
+            "float32": np.float32,
+        }[dtype]
         for d in (vae_state, dit_state, cond_state, t5_state):
             for k in d:
                 if d[k].dtype in (np.float32, np.float64):
                     d[k] = d[k].astype(np_dtype)
 
     # Save split files
-    print(f"\nConverted weights:")
+    print("\nConverted weights:")
     print(f"  VAE:          {len(vae_state)} tensors")
     print(f"  DiT:          {len(dit_state)} tensors")
     print(f"  Conditioners: {len(cond_state)} tensors")
@@ -233,6 +241,7 @@ def _download_t5_weights(output_dir: Path) -> None:
         t5_sf = t5_path / "text_encoder" / "model.safetensors"
         if t5_sf.exists():
             import shutil
+
             shutil.copy2(t5_sf, output_dir / "t5.safetensors")
             print("Downloaded T5 encoder weights.")
         else:

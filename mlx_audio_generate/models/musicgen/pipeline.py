@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
-import mlx.nn as nn
 import numpy as np
 from transformers import AutoTokenizer
 
@@ -133,7 +132,8 @@ class MusicGenPipeline:
             seconds: Duration in seconds (max ~30s recommended).
             top_k: Number of top candidates for sampling.
             temperature: Softmax temperature (higher = more creative).
-            guidance_coef: Classifier-free guidance scale (higher = more prompt-aligned).
+            guidance_coef: Classifier-free guidance scale
+                (higher = more prompt-aligned).
             seed: Random seed for reproducibility.
 
         Returns:

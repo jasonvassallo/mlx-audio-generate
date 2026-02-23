@@ -1,14 +1,20 @@
 """Audio file I/O utilities."""
 
+from __future__ import annotations
+
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import mlx.core as mx
 
 
 def save_wav(
     path: str | Path,
-    audio: "np.ndarray | mx.array",
+    audio: np.ndarray | mx.array,
     sample_rate: int,
     channels: int = 1,
 ) -> None:

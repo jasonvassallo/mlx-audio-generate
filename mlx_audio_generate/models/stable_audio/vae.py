@@ -96,7 +96,14 @@ class OobleckEncoder(nn.Module):
     def __init__(self, config: OobleckConfig):
         super().__init__()
         layers = []
-        layers.append(nn.Conv1d(config.in_channels, config.channels, kernel_size=7, padding=3))
+        layers.append(
+            nn.Conv1d(
+                config.in_channels,
+                config.channels,
+                kernel_size=7,
+                padding=3,
+            )
+        )
 
         c_in = config.channels
         for i, stride in enumerate(config.strides):
@@ -126,7 +133,10 @@ class OobleckDecoder(nn.Module):
         c_in = c_hidden
 
         for i, stride in enumerate(strides):
-            c_out = config.channels * c_mults[i + 1] if i < len(c_mults) - 1 else config.channels
+            if i < len(c_mults) - 1:
+                c_out = config.channels * c_mults[i + 1]
+            else:
+                c_out = config.channels
             layers.append(DecoderBlock(c_in, c_out, stride))
             c_in = c_out
 

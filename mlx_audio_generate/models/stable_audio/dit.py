@@ -197,9 +197,13 @@ class DiTBlock(nn.Module):
         if self.cross_attend:
             self.cross_attend_norm = nn.LayerNorm(config.embed_dim, eps=1e-6)
             cond_dim = (
-                config.embed_dim if config.project_cond_tokens else config.cond_token_dim
+                config.embed_dim
+                if config.project_cond_tokens
+                else config.cond_token_dim
             )
-            self.cross_attn = CrossAttention(config.embed_dim, cond_dim, config.num_heads)
+            self.cross_attn = CrossAttention(
+                config.embed_dim, cond_dim, config.num_heads
+            )
 
         self.ff_norm = nn.LayerNorm(config.embed_dim, eps=1e-6)
         self.ff = FeedForward(config.embed_dim)
@@ -254,7 +258,9 @@ class StableAudioDiT(nn.Module):
 
         if config.cond_token_dim > 0:
             cond_embed_dim = (
-                config.embed_dim if config.project_cond_tokens else config.cond_token_dim
+                config.embed_dim
+                if config.project_cond_tokens
+                else config.cond_token_dim
             )
             self.to_cond_embed = nn.Sequential(
                 nn.Linear(config.cond_token_dim, cond_embed_dim, bias=False),

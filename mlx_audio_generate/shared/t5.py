@@ -33,7 +33,8 @@ class T5Config:
     def from_dict(cls, d: dict) -> "T5Config":
         import inspect
 
-        return cls(**{k: v for k, v in d.items() if k in inspect.signature(cls).parameters})
+        valid = inspect.signature(cls).parameters
+        return cls(**{k: v for k, v in d.items() if k in valid})
 
 
 class T5LayerNorm(nn.Module):
@@ -214,7 +215,8 @@ class T5Stack(nn.Module):
         mask = None
         if attention_mask is not None:
             if attention_mask.ndim == 2:
-                mask = (1.0 - attention_mask[:, None, None, :].astype(mx.float32)) * -1e9
+                expanded = attention_mask[:, None, None, :]
+                mask = (1.0 - expanded.astype(mx.float32)) * -1e9
             else:
                 mask = attention_mask
 

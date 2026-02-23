@@ -20,7 +20,8 @@ class DiTConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "DiTConfig":
-        return cls(**{k: v for k, v in d.items() if k in inspect.signature(cls).parameters})
+        valid = inspect.signature(cls).parameters
+        return cls(**{k: v for k, v in d.items() if k in valid})
 
 
 @dataclass
@@ -35,7 +36,8 @@ class OobleckConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "OobleckConfig":
-        return cls(**{k: v for k, v in d.items() if k in inspect.signature(cls).parameters})
+        valid = inspect.signature(cls).parameters
+        return cls(**{k: v for k, v in d.items() if k in valid})
 
 
 @dataclass

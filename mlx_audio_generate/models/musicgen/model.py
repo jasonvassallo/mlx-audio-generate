@@ -157,8 +157,7 @@ class MusicGenModel(nn.Module):
         # Create KV caches for all layers
         head_dim = self.hidden_size // self.num_attention_heads
         caches = [
-            KVCache(head_dim, self.num_attention_heads)
-            for _ in range(len(self.layers))
+            KVCache(head_dim, self.num_attention_heads) for _ in range(len(self.layers))
         ]
 
         for step in tqdm(range(max_steps), desc="Generating"):
@@ -170,7 +169,9 @@ class MusicGenModel(nn.Module):
 
             # CFG: combine conditional and unconditional logits
             cond_logits, uncond_logits = logits[:1], logits[1:2]
-            guided_logits = uncond_logits + (cond_logits - uncond_logits) * guidance_coef
+            guided_logits = (
+                uncond_logits + (cond_logits - uncond_logits) * guidance_coef
+            )
 
             # Sample tokens
             audio_tokens = top_k_sampling(guided_logits, top_k, temperature, axis=-2)

@@ -39,7 +39,10 @@ class NumberEmbedder(nn.Module):
 
         Expected keys: 'embedding.0.weights', 'embedding.1.weight', 'embedding.1.bias'
         """
-        to_mx = lambda v: mx.array(v) if not isinstance(v, mx.array) else v
+
+        def to_mx(v):
+            return mx.array(v) if not isinstance(v, mx.array) else v
+
         self.freqs = to_mx(weights["embedding.0.weights"])
         self.linear_w = to_mx(weights["embedding.1.weight"])
         self.linear_b = to_mx(weights["embedding.1.bias"])
@@ -51,7 +54,9 @@ class NumberEmbedder(nn.Module):
             x = x[:, None]  # (B, 1)
 
         proj = 2 * math.pi * x * self.freqs[None, :]  # (B, features)
-        fourier = mx.concatenate([mx.cos(proj), mx.sin(proj)], axis=-1)  # (B, 2*features)
+        fourier = mx.concatenate(
+            [mx.cos(proj), mx.sin(proj)], axis=-1
+        )  # (B, 2*features)
         h = mx.concatenate([fourier, x], axis=-1)  # (B, 2*features + 1)
 
         return h @ self.linear_w.T + self.linear_b  # (B, hidden_dim)
@@ -88,9 +93,7 @@ class Conditioners(nn.Module):
         if total_weights:
             self.seconds_total.load_weights(total_weights)
 
-    def __call__(
-        self, prompt: str, seconds_total: float
-    ) -> tuple[mx.array, mx.array]:
+    def __call__(self, prompt: str, seconds_total: float) -> tuple[mx.array, mx.array]:
         """Encode text + duration into conditioning tensors.
 
         Args:
