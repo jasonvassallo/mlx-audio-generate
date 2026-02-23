@@ -1,0 +1,61 @@
+[project]
+name = "mlx-audio-generate"
+version = "0.1.0"
+description = "Music and audio generation on Apple Silicon using MLX - MusicGen and Stable Audio Open"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    {name = "Jason Vassallo"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: MacOS :: MacOS X",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "mlx>=0.25.2",
+    "numpy>=1.26.4",
+    "huggingface-hub>=0.27.0",
+    "transformers>=4.40.0",
+    "safetensors>=0.4.0",
+    "soundfile>=0.12.0",
+    "sounddevice>=0.5.0",
+    "tqdm>=4.66.0",
+    "tokenizers>=0.19.0",
+    "sentencepiece>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+mlx-audio-generate = "mlx_audio_generate.cli.generate:main"
+mlx-audio-convert = "mlx_audio_generate.cli.convert:main"
+
+[project.urls]
+Homepage = "https://github.com/jasonvassallo/mlx-audio-generate"
+Repository = "https://github.com/jasonvassallo/mlx-audio-generate"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

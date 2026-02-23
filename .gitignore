@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+wheels/
+.venv/
+
+# MLX / ML
+model/
+mlx_model/
+converted/
+*.npz
+*.safetensors
+!tests/fixtures/*.safetensors
+
+# Audio output
+*.wav
+*.mp3
+*.flac
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# uv
+uv.lock
