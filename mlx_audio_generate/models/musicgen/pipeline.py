@@ -139,8 +139,24 @@ class MusicGenPipeline:
         Returns:
             NumPy array of audio samples, shape (num_samples,), at self.sample_rate Hz.
         """
+        # Validate prompt
+        if not prompt or not prompt.strip():
+            raise ValueError("Prompt must be a non-empty string.")
+        # T5 tokenizer max_length is 512 tokens; warn if prompt is very long
+        _MAX_PROMPT_CHARS = 2000
+        if len(prompt) > _MAX_PROMPT_CHARS:
+            print(
+                f"Warning: Prompt is {len(prompt)} chars (max recommended: "
+                f"{_MAX_PROMPT_CHARS}). It will be truncated by the tokenizer."
+            )
+
         if seed is not None:
             mx.random.seed(seed)
+        else:
+            # Use OS entropy for non-reproducible generation
+            import os
+
+            mx.random.seed(int.from_bytes(os.urandom(4)))
 
         # Calculate number of generation steps from desired duration
         # Frame rate = sampling_rate / product(upsampling_ratios) = 32000/640 = 50 Hz
@@ -194,13 +210,17 @@ _force_compute = getattr(mx, "ev" + "al")
 
 
 def _load_config(weights_path: Path) -> MusicGenConfig:
-    """Load MusicGen config from JSON."""
+    """Load MusicGen config from JSON with basic validation."""
     config_file = weights_path / "config.json"
-    if config_file.exists():
-        with open(config_file) as f:
-            data = json.load(f)
-        return MusicGenConfig.from_dict(data)
-    return MusicGenConfig()
+    if not config_file.exists():
+        raise FileNotFoundError(
+            f"config.json not found in {weights_path}. Run mlx-audio-convert first."
+        )
+    with open(config_file) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"config.json must be a JSON object, got {type(data)}")
+    return MusicGenConfig.from_dict(data)
 
 
 def _load_t5_config(weights_path: Path) -> T5Config:
@@ -220,11 +240,14 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
         tokenizer = AutoTokenizer.from_pretrained(str(weights_path))
         print(f"Loaded tokenizer from {weights_path}")
         return tokenizer
-    except Exception:
+    except (OSError, ValueError, KeyError):
         pass
 
     # Fall back: download the T5 tokenizer used by MusicGen
-    print("Downloading T5 tokenizer...")
+    print(
+        "Warning: Tokenizer not found locally. "
+        "Downloading T5 tokenizer from HuggingFace..."
+    )
     # MusicGen uses t5-base tokenizer
     tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
     tokenizer.save_pretrained(str(weights_path))

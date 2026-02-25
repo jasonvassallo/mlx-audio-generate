@@ -305,13 +305,14 @@ def _save_tokenizer(output_dir: Path, repo_id: str) -> None:
             tokenizer.save_pretrained(str(output_dir))
             print(f"Saved tokenizer to {output_dir}")
             return
-        except Exception:
+        except (OSError, ValueError, KeyError) as e:
+            print(f"  Could not load tokenizer from {source}: {e}")
             continue
 
     # Fallback to plain T5 tokenizer
     try:
         tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
         tokenizer.save_pretrained(str(output_dir))
-        print("Saved T5-base tokenizer as fallback.")
-    except Exception as e:
+        print("Warning: Saved T5-base tokenizer as fallback.")
+    except (OSError, ValueError, KeyError) as e:
         print(f"Warning: Could not save tokenizer: {e}")

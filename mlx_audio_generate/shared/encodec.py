@@ -75,12 +75,17 @@ _lstm_kernel = mx.fast.metal_kernel(
 def _lstm_custom(x, h_in, cell, time_step):
     """Run one LSTM timestep on Metal GPU."""
     assert x.ndim == 3, "Input to LSTM must have 3 dimensions."
+    hidden_size = cell.shape[-1]
+    assert hidden_size > 0, f"Hidden size must be positive, got {hidden_size}"
+    assert h_in.size == x.shape[0] * hidden_size * 4, (
+        f"h_in size {h_in.size} != batch({x.shape[0]}) * 4 * hidden({hidden_size})"
+    )
     out_shape = cell.shape
     return _lstm_kernel(
-        inputs=[x, h_in, cell, out_shape[-1], time_step, x.shape[-2]],
+        inputs=[x, h_in, cell, hidden_size, time_step, x.shape[-2]],
         output_shapes=[out_shape, out_shape],
         output_dtypes=[h_in.dtype, h_in.dtype],
-        grid=(x.shape[0], h_in.size // 4, 1),
+        grid=(x.shape[0], hidden_size, 1),
         threadgroup=(256, 1, 1),
     )
 

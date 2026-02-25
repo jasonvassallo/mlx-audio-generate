@@ -85,6 +85,27 @@ Module attribute names are chosen to match HuggingFace safetensors keys after pr
 ### MLX Parameter Discovery
 `nn.Module` only discovers parameters stored as direct attributes, not items in plain Python lists. For dynamic-count blocks, use `setattr(self, f"block_{i}", ...)` or rely on MLX's list-of-modules pattern (which does work for `nn.Module` subclass lists).
 
+## Security Patterns
+
+### Input Validation at CLI Boundary
+All user inputs are validated in `cli/generate.py` and `cli/convert.py` before reaching model code:
+- **Path traversal defense**: Output paths are resolved and checked for `..` components
+- **Weights directory validation**: Must exist, be a directory, and resolve cleanly
+- **Numeric range validation**: Duration, temperature, top-k, steps, and guidance scales are range-checked
+- **Repo ID whitelist**: `cli/convert.py` maintains a whitelist of known-safe HuggingFace repos; non-whitelisted repos require `--trust-remote-code`
+
+### Exception Handling
+Use specific exception types (`OSError`, `ValueError`, `KeyError`) instead of bare `except Exception`. This prevents silently swallowing real bugs while still handling expected failures like missing files or network errors.
+
+### Network Retry Logic
+`shared/hub.py` retries transient network failures up to 3 times with exponential backoff. Only `OSError`, `ConnectionError`, and `TimeoutError` are retried — programming errors propagate immediately.
+
+### Subprocess Safety
+`audio_io.play_audio()` resolves and validates the file path before passing it to `subprocess.run()`. The path is passed as a list element (not through shell), preventing shell injection.
+
+### Prompt Validation
+Both pipeline `generate()` methods validate that prompts are non-empty and warn when prompts exceed 2000 characters (the T5 tokenizer truncates at 512 tokens).
+
 ## Weight Conversion
 
 Each model variant requires separate conversion (different architectures/weights):

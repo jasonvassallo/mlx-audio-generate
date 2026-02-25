@@ -72,7 +72,10 @@ def load_wav(
 
 def play_audio(path: str | Path) -> None:
     """Play audio using macOS afplay. Fails silently on non-macOS."""
+    resolved = Path(path).resolve()
+    if not resolved.is_file():
+        return
     try:
-        subprocess.run(["afplay", str(path)], check=True, capture_output=True)
+        subprocess.run(["afplay", str(resolved)], check=True, capture_output=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass

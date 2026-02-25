@@ -270,7 +270,8 @@ def _save_tokenizer(output_dir: Path, repo_id: str) -> None:
             tokenizer.save_pretrained(str(output_dir))
             print(f"Saved tokenizer to {output_dir}")
             return
-        except Exception:
+        except (OSError, ValueError, KeyError) as e:
+            print(f"  Could not load tokenizer from {source}: {e}")
             continue
 
     print("Warning: Could not save tokenizer. It will be downloaded at runtime.")

@@ -131,8 +131,23 @@ class StableAudioPipeline:
         Returns:
             Audio tensor of shape (1, channels, samples).
         """
+        # Validate prompt
+        if not prompt or not prompt.strip():
+            raise ValueError("Prompt must be a non-empty string.")
+        _MAX_PROMPT_CHARS = 2000
+        if len(prompt) > _MAX_PROMPT_CHARS:
+            print(
+                f"Warning: Prompt is {len(prompt)} chars (max recommended: "
+                f"{_MAX_PROMPT_CHARS}). It will be truncated by the tokenizer."
+            )
+
         if seed is not None:
             mx.random.seed(seed)
+        else:
+            # Use OS entropy for non-reproducible generation
+            import os
+
+            mx.random.seed(int.from_bytes(os.urandom(4)))
 
         # Conditioning
         print("Encoding conditioning...")
@@ -189,13 +204,17 @@ class StableAudioPipeline:
 
 
 def _load_config(weights_path: Path) -> StableAudioConfig:
-    """Load model config from JSON or fall back to defaults."""
+    """Load model config from JSON with basic validation."""
     config_file = weights_path / "config.json"
-    if config_file.exists():
-        with open(config_file) as f:
-            data = json.load(f)
-        return StableAudioConfig.from_dict(data)
-    return StableAudioConfig()
+    if not config_file.exists():
+        raise FileNotFoundError(
+            f"config.json not found in {weights_path}. Run mlx-audio-convert first."
+        )
+    with open(config_file) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"config.json must be a JSON object, got {type(data)}")
+    return StableAudioConfig.from_dict(data)
 
 
 def _load_t5_config(weights_path: Path) -> T5Config:
@@ -216,11 +235,11 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
         tokenizer = AutoTokenizer.from_pretrained(str(weights_path))
         print(f"Loaded tokenizer from {weights_path}")
         return tokenizer
-    except Exception:
+    except (OSError, ValueError, KeyError):
         pass
 
     # Fall back to downloading from HF
-    print("Downloading tokenizer from HuggingFace...")
+    print("Warning: Tokenizer not found locally. Downloading from HuggingFace...")
     # Both stable-audio-open-small and 1.0 use the same T5 tokenizer
     for source in [repo_id, "stabilityai/stable-audio-open-1.0"]:
         try:
@@ -228,10 +247,11 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
             tokenizer.save_pretrained(str(weights_path))
             print(f"Saved tokenizer to {weights_path}")
             return tokenizer
-        except Exception:
+        except (OSError, ValueError, KeyError):
             continue
 
     # Last resort: try loading as a plain T5 tokenizer
+    print("Warning: Falling back to generic T5-base tokenizer.")
     tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
     tokenizer.save_pretrained(str(weights_path))
     return tokenizer

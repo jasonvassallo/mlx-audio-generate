@@ -1,8 +1,16 @@
 """HuggingFace Hub integration for downloading and loading model weights."""
 
+import logging
+import time
 from pathlib import Path
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# Retry configuration for transient network failures
+_MAX_RETRIES = 3
+_RETRY_DELAY_SECONDS = 2.0
 
 
 def download_model(
@@ -11,7 +19,9 @@ def download_model(
     revision: str | None = None,
     force: bool = False,
 ) -> Path:
-    """Download a model from HuggingFace Hub.
+    """Download a model from HuggingFace Hub with retry logic.
+
+    Retries up to 3 times with exponential backoff on transient network errors.
 
     Returns the path to the cached snapshot directory.
     """
@@ -20,13 +30,38 @@ def download_model(
     if allow_patterns is None:
         allow_patterns = ["*.json", "*.safetensors", "*.model", "*.txt"]
 
-    path = snapshot_download(
-        repo_id,
-        allow_patterns=allow_patterns,
-        revision=revision,
-        force_download=force,
-    )
-    return Path(path)
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            logger.info(
+                "Downloading %s (attempt %d/%d)",
+                repo_id,
+                attempt,
+                _MAX_RETRIES,
+            )
+            path = snapshot_download(
+                repo_id,
+                allow_patterns=allow_patterns,
+                revision=revision,
+                force_download=force,
+            )
+            logger.info("Downloaded %s to %s", repo_id, path)
+            return Path(path)
+        except (OSError, ConnectionError, TimeoutError) as e:
+            last_error = e
+            if attempt < _MAX_RETRIES:
+                delay = _RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                logger.warning(
+                    "Download attempt %d failed: %s. Retrying in %.1fs...",
+                    attempt,
+                    e,
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error("Download failed after %d attempts: %s", _MAX_RETRIES, e)
+
+    raise last_error  # type: ignore[misc]
 
 
 def load_safetensors(path: str | Path) -> dict[str, np.ndarray]:
