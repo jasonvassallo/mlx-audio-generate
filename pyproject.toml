@@ -3,7 +3,7 @@ name = "mlx-audio-generate"
 version = "0.1.0"
 description = "Music and audio generation on Apple Silicon using MLX - MusicGen and Stable Audio Open"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
     {name = "Jason Vassallo"}
@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
 ]
 
 dependencies = [
@@ -45,6 +45,7 @@ mlx-audio-convert = "mlx_audio_generate.cli.convert:main"
 [project.urls]
 Homepage = "https://github.com/jasonvassallo/mlx-audio-generate"
 Repository = "https://github.com/jasonvassallo/mlx-audio-generate"
+HuggingFace = "https://huggingface.co/jasonvassallo/mlx-audio-generate"
 
 [build-system]
 requires = ["hatchling"]

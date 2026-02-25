@@ -30,3 +30,6 @@ converted/
 
 # uv
 uv.lock
+
+# HuggingFace clone artifacts
+mlx-audio-generate/
