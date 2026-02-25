@@ -34,7 +34,7 @@ class NumberEmbedder(nn.Module):
         self.linear_w = mx.zeros((hidden_dim, 2 * features + 1))
         self.linear_b = mx.zeros((hidden_dim,))
 
-    def load_weights(self, weights: dict[str, mx.array | np.ndarray]):
+    def load_weights(self, weights: dict[str, mx.array | np.ndarray]):  # type: ignore[override]
         """Load from extracted conditioner state dict.
 
         Expected keys: 'embedding.0.weights', 'embedding.1.weight', 'embedding.1.bias'
@@ -76,7 +76,7 @@ class Conditioners(nn.Module):
         self.tokenizer = tokenizer
         self.seconds_total = NumberEmbedder(128, 768)
 
-    def load_weights(self, cond_state: dict):
+    def load_weights(self, cond_state: dict):  # type: ignore[override]
         """Load conditioner weights from the converted state dict.
 
         Keys look like:
@@ -93,7 +93,9 @@ class Conditioners(nn.Module):
         if total_weights:
             self.seconds_total.load_weights(total_weights)
 
-    def __call__(self, prompt: str, seconds_total: float) -> tuple[mx.array, mx.array]:
+    def __call__(
+        self, prompt: str, seconds_total: float | mx.array
+    ) -> tuple[mx.array, mx.array]:
         """Encode text + duration into conditioning tensors.
 
         Args:
@@ -119,10 +121,13 @@ class Conditioners(nn.Module):
         t5_tokens = t5_output[:, :64, :]  # first 64 tokens
 
         # Time embedding
+        seconds_arr: mx.array
         if isinstance(seconds_total, (float, int)):
-            seconds_total = mx.array([seconds_total])
+            seconds_arr = mx.array([seconds_total])
+        else:
+            seconds_arr = seconds_total
 
-        time_emb = self.seconds_total(seconds_total)  # (1, 768)
+        time_emb = self.seconds_total(seconds_arr)  # (1, 768)
 
         # Outputs
         global_cond = time_emb

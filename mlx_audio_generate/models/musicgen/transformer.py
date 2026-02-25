@@ -37,8 +37,8 @@ class KVCache:
             self.k_head_dim, self.v_head_dim = head_dim
         else:
             raise ValueError("head_dim must be an int or a tuple of two ints")
-        self.keys = None
-        self.values = None
+        self.keys: Optional[mx.array] = None
+        self.values: Optional[mx.array] = None
         self.offset = 0
         self.step = step
 
@@ -63,16 +63,16 @@ class KVCache:
             if self.keys is not None:
                 if prev % self.step != 0:
                     self.keys = self.keys[..., :prev, :]
-                    self.values = self.values[..., :prev, :]
+                    self.values = self.values[..., :prev, :]  # type: ignore[index]
                 self.keys = mx.concatenate([self.keys, new_k], axis=2)
-                self.values = mx.concatenate([self.values, new_v], axis=2)
+                self.values = mx.concatenate([self.values, new_v], axis=2)  # type: ignore[list-item]
             else:
                 self.keys, self.values = new_k, new_v
 
         self.offset += keys.shape[2]
-        self.keys[..., prev : self.offset, :] = keys
-        self.values[..., prev : self.offset, :] = values
-        return self.keys[..., : self.offset, :], self.values[..., : self.offset, :]
+        self.keys[..., prev : self.offset, :] = keys  # type: ignore[index]
+        self.values[..., prev : self.offset, :] = values  # type: ignore[index]
+        return self.keys[..., : self.offset, :], self.values[..., : self.offset, :]  # type: ignore[index]
 
     @property
     def state(self):
@@ -189,7 +189,8 @@ def create_sin_embedding(positions: mx.array, dim: int, max_period: float = 1000
     Returns:
         Embeddings of shape matching positions + (dim,).
     """
-    assert dim % 2 == 0
+    if dim % 2 != 0:
+        raise ValueError(f"Embedding dimension must be even, got {dim}")
     half_dim = dim // 2
     adim = mx.arange(half_dim).reshape(1, 1, -1)
     phase = positions / (max_period ** (adim / (half_dim - 1)))

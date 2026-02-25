@@ -22,7 +22,8 @@ class FourierFeatures(nn.Module):
 
     def __init__(self, in_features: int, out_features: int):
         super().__init__()
-        assert out_features % 2 == 0
+        if out_features % 2 != 0:
+            raise ValueError(f"out_features must be even, got {out_features}")
         self.weight = mx.random.normal((out_features // 2, in_features))
 
     def __call__(self, x: mx.array) -> mx.array:

@@ -108,7 +108,7 @@ class T5Attention(nn.Module):
         num_buckets: int = 32,
         max_distance: int = 128,
     ) -> mx.array:
-        ret = 0
+        ret: int | mx.array = 0
         n = -relative_position
         if bidirectional:
             num_buckets //= 2

@@ -79,14 +79,14 @@ class StableAudioPipeline:
         vae = AutoencoderOobleck(config.vae)
         vae_weights = load_safetensors(weights_path / "vae.safetensors")
         vae.load_weights(list((k, mx.array(v)) for k, v in vae_weights.items()))
-        nn.eval(vae)
+        nn.eval(vae)  # type: ignore[attr-defined]
 
         # Build and load DiT
         print("Loading DiT...")
         dit = StableAudioDiT(config.dit)
         dit_weights = load_safetensors(weights_path / "dit.safetensors")
         dit.load_weights(list((k, mx.array(v)) for k, v in dit_weights.items()))
-        nn.eval(dit)
+        nn.eval(dit)  # type: ignore[attr-defined]
 
         # Build and load T5
         print("Loading T5...")
@@ -94,7 +94,7 @@ class StableAudioPipeline:
         t5 = T5EncoderModel(t5_config)
         t5_weights = load_safetensors(weights_path / "t5.safetensors")
         t5.load_weights(list((k, mx.array(v)) for k, v in t5_weights.items()))
-        nn.eval(t5)
+        nn.eval(t5)  # type: ignore[attr-defined]
 
         # Build conditioners and load embedder weights
         print("Loading conditioners...")
@@ -232,7 +232,9 @@ def _load_t5_config(weights_path: Path) -> T5Config:
 def _load_tokenizer(weights_path: Path, repo_id: str):
     """Load tokenizer from local dir or download from HuggingFace."""
     try:
-        tokenizer = AutoTokenizer.from_pretrained(str(weights_path))
+        tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — local path
+            str(weights_path)
+        )
         print(f"Loaded tokenizer from {weights_path}")
         return tokenizer
     except (OSError, ValueError, KeyError):
@@ -243,7 +245,9 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
     # Both stable-audio-open-small and 1.0 use the same T5 tokenizer
     for source in [repo_id, "stabilityai/stable-audio-open-1.0"]:
         try:
-            tokenizer = AutoTokenizer.from_pretrained(source, subfolder="tokenizer")
+            tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — known HF repo
+                source, subfolder="tokenizer"
+            )
             tokenizer.save_pretrained(str(weights_path))
             print(f"Saved tokenizer to {weights_path}")
             return tokenizer
@@ -252,6 +256,8 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
 
     # Last resort: try loading as a plain T5 tokenizer
     print("Warning: Falling back to generic T5-base tokenizer.")
-    tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
+    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — known HF repo
+        "google-t5/t5-base"
+    )
     tokenizer.save_pretrained(str(weights_path))
     return tokenizer

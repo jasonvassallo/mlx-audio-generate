@@ -20,7 +20,7 @@ import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -74,12 +74,15 @@ _lstm_kernel = mx.fast.metal_kernel(
 
 def _lstm_custom(x, h_in, cell, time_step):
     """Run one LSTM timestep on Metal GPU."""
-    assert x.ndim == 3, "Input to LSTM must have 3 dimensions."
+    if x.ndim != 3:
+        raise ValueError("Input to LSTM must have 3 dimensions.")
     hidden_size = cell.shape[-1]
-    assert hidden_size > 0, f"Hidden size must be positive, got {hidden_size}"
-    assert h_in.size == x.shape[0] * hidden_size * 4, (
-        f"h_in size {h_in.size} != batch({x.shape[0]}) * 4 * hidden({hidden_size})"
-    )
+    if hidden_size <= 0:
+        raise ValueError(f"Hidden size must be positive, got {hidden_size}")
+    if h_in.size != x.shape[0] * hidden_size * 4:
+        raise ValueError(
+            f"h_in size {h_in.size} != batch({x.shape[0]}) * 4 * hidden({hidden_size})"
+        )
     out_shape = cell.shape
     return _lstm_kernel(
         inputs=[x, h_in, cell, hidden_size, time_step, x.shape[-2]],
@@ -268,7 +271,7 @@ class EncodecResnetBlock(nn.Module):
             raise ValueError("Number of kernel sizes should match number of dilations")
 
         hidden = dim // config.compress
-        block = []
+        block: list[nn.Module] = []
         for i, (kernel_size, dilation) in enumerate(zip(kernel_sizes, dilations)):
             in_chs = dim if i == 0 else hidden
             out_chs = dim if i == len(kernel_sizes) - 1 else hidden
@@ -278,6 +281,7 @@ class EncodecResnetBlock(nn.Module):
             ]
         self.block = block
 
+        self.shortcut: nn.Module
         if getattr(config, "use_conv_shortcut", True):
             self.shortcut = EncodecConv1d(config, dim, dim, kernel_size=1)
         else:
@@ -489,7 +493,7 @@ class EncodecResidualVectorQuantizer(nn.Module):
 
     def decode(self, codes: mx.array) -> mx.array:
         """Decode RVQ codes back to continuous embeddings."""
-        quantized_out = None
+        quantized_out: Optional[mx.array] = None
         for i, indices in enumerate(codes.split(codes.shape[1], axis=1)):
             layer = self.layers[i]
             quantized = layer.decode(indices.squeeze(1))
@@ -497,6 +501,8 @@ class EncodecResidualVectorQuantizer(nn.Module):
                 quantized_out = quantized
             else:
                 quantized_out = quantized + quantized_out
+        if quantized_out is None:
+            raise ValueError("Cannot decode empty codes tensor.")
         return quantized_out
 
 
@@ -548,7 +554,7 @@ class EncodecModel(nn.Module):
     def encode(
         self,
         input_values: mx.array,
-        padding_mask: mx.array = None,
+        padding_mask: Optional[mx.array] = None,
         bandwidth: Optional[float] = None,
     ) -> Tuple[mx.array, list]:
         """Encode audio waveform to discrete codes.
@@ -583,8 +589,8 @@ class EncodecModel(nn.Module):
         if padding_mask is None:
             padding_mask = mx.ones(input_values.shape[:2], dtype=mx.bool_)
 
-        encoded_frames = []
-        scales = []
+        encoded_frames: list[mx.array] = []
+        scales: list[Optional[mx.array]] = []
 
         step = chunk_length - stride
         if (input_length % stride) != step:
@@ -599,8 +605,8 @@ class EncodecModel(nn.Module):
             encoded_frames.append(encoded_frame)
             scales.append(scale)
 
-        encoded_frames = mx.stack(encoded_frames)
-        return (encoded_frames, scales)
+        stacked_frames = mx.stack(encoded_frames)
+        return (stacked_frames, scales)
 
     def _decode_frame(
         self, codes: mx.array, scale: Optional[mx.array] = None
@@ -691,7 +697,7 @@ class EncodecModel(nn.Module):
         return out / sum_weight
 
     @classmethod
-    def from_pretrained(cls, path_or_repo: str) -> Tuple["EncodecModel", callable]:
+    def from_pretrained(cls, path_or_repo: str) -> Tuple["EncodecModel", Callable]:
         """Load pre-converted EnCodec model from HuggingFace or local path.
 
         Default: loads from `mlx-community/encodec-32khz-float32`.
@@ -704,7 +710,7 @@ class EncodecModel(nn.Module):
         path = Path(path_or_repo)
         if not path.exists():
             path = Path(
-                snapshot_download(
+                snapshot_download(  # nosec B615 — repo pinned by caller
                     repo_id=path_or_repo,
                     allow_patterns=["*.json", "*.safetensors", "*.model"],
                 )
@@ -753,7 +759,7 @@ def preprocess_audio(
     raw_audio = [x[..., None] if x.ndim == 1 else x for x in raw_audio]
 
     max_length = max(array.shape[0] for array in raw_audio)
-    if chunk_length is not None:
+    if chunk_length is not None and chunk_stride is not None:
         max_length += chunk_length - (max_length % chunk_stride)
 
     inputs = []
@@ -764,7 +770,7 @@ def preprocess_audio(
         difference = max_length - length
         if difference > 0:
             mask = mx.pad(mask, (0, difference))
-            x = mx.pad(x, ((0, difference), (0, 0)))
+            x = mx.pad(x, [(0, difference), (0, 0)])
         inputs.append(x)
         masks.append(mask)
     return mx.stack(inputs), mx.stack(masks)

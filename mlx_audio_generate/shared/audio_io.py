@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec B404 — needed for macOS afplay audio playback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -76,6 +76,8 @@ def play_audio(path: str | Path) -> None:
     if not resolved.is_file():
         return
     try:
-        subprocess.run(["afplay", str(resolved)], check=True, capture_output=True)
+        subprocess.run(  # nosec B607 B603 — afplay is macOS system binary, path is validated above
+            ["afplay", str(resolved)], check=True, capture_output=True
+        )
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass

@@ -39,7 +39,7 @@ def download_model(
                 attempt,
                 _MAX_RETRIES,
             )
-            path = snapshot_download(
+            path = snapshot_download(  # nosec B615 — revision passed by caller
                 repo_id,
                 allow_patterns=allow_patterns,
                 revision=revision,

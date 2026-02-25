@@ -95,7 +95,7 @@ class MusicGenModel(nn.Module):
             Logits of shape (B, seq_len, codebook_size, num_codebooks).
         """
         if cache is None:
-            cache = [None] * len(self.layers)
+            cache: list[Optional[KVCache]] = [None] * len(self.layers)  # type: ignore[no-redef]
 
         # Sum embeddings from all codebooks (each codebook embeds independently)
         x = sum(
@@ -104,13 +104,13 @@ class MusicGenModel(nn.Module):
         )
 
         # Add sinusoidal positional embeddings
-        offset = cache[0].offset if cache[0] is not None else 0
+        offset = cache[0].offset if cache[0] is not None else 0  # type: ignore[index]
         positions = mx.arange(offset, offset + x.shape[1]).reshape(1, -1, 1)
         pos_emb = create_sin_embedding(positions, self.hidden_size)
         x = x + pos_emb.astype(x.dtype)
 
         # Run through transformer layers
-        for layer, c in zip(self.layers, cache):
+        for layer, c in zip(self.layers, cache):  # type: ignore[arg-type]
             x = layer(x, conditioning, cache=c)
 
         # Final norm + per-codebook logits

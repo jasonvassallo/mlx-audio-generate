@@ -95,7 +95,7 @@ class DecoderBlock(nn.Module):
 class OobleckEncoder(nn.Module):
     def __init__(self, config: OobleckConfig):
         super().__init__()
-        layers = []
+        layers: list[nn.Module] = []
         layers.append(
             nn.Conv1d(
                 config.in_channels,
@@ -123,7 +123,7 @@ class OobleckEncoder(nn.Module):
 class OobleckDecoder(nn.Module):
     def __init__(self, config: OobleckConfig):
         super().__init__()
-        layers = []
+        layers: list[nn.Module] = []
         c_hidden = config.channels * config.c_mults[-1]
 
         layers.append(nn.Conv1d(config.latent_dim, c_hidden, kernel_size=7, padding=3))

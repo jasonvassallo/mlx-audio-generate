@@ -266,7 +266,7 @@ def _save_tokenizer(output_dir: Path, repo_id: str) -> None:
     # MusicGen uses the t5-base tokenizer
     for source in [repo_id, "google-t5/t5-base"]:
         try:
-            tokenizer = AutoTokenizer.from_pretrained(source)
+            tokenizer = AutoTokenizer.from_pretrained(source)  # nosec B615 — known HF repo
             tokenizer.save_pretrained(str(output_dir))
             print(f"Saved tokenizer to {output_dir}")
             return

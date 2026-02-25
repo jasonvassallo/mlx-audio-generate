@@ -192,7 +192,7 @@ class MusicGenPipeline:
         # EnCodec expects codes: (B, K, T) where K=num_codebooks
         codes = mx.swapaxes(audio_tokens, -1, -2)[:, mx.newaxis]
         # codes shape: (1, 1, num_codebooks, seq_len)
-        audio = self.encodec.decode(codes, audio_scales=[None])
+        audio = self.encodec.decode(codes, audio_scales=[None])  # type: ignore[list-item]
         _force_compute(audio)
 
         # Convert to numpy, squeeze to 1D
@@ -237,7 +237,9 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
     """Load T5 tokenizer from local dir or download from HuggingFace."""
     # Try loading from converted weights directory
     try:
-        tokenizer = AutoTokenizer.from_pretrained(str(weights_path))
+        tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — local path
+            str(weights_path)
+        )
         print(f"Loaded tokenizer from {weights_path}")
         return tokenizer
     except (OSError, ValueError, KeyError):
@@ -249,7 +251,9 @@ def _load_tokenizer(weights_path: Path, repo_id: str):
         "Downloading T5 tokenizer from HuggingFace..."
     )
     # MusicGen uses t5-base tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
+    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — known HF repo
+        "google-t5/t5-base"
+    )
     tokenizer.save_pretrained(str(weights_path))
     print(f"Saved tokenizer to {weights_path}")
     return tokenizer

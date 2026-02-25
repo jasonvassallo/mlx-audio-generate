@@ -246,7 +246,7 @@ def _download_t5_weights(output_dir: Path) -> None:
             print("Downloaded T5 encoder weights.")
         else:
             print("Warning: Could not find T5 weights in download.")
-    except Exception as e:
+    except (OSError, ConnectionError, TimeoutError) as e:
         print(f"Warning: Could not download T5 weights: {e}")
 
 
@@ -259,7 +259,7 @@ def _save_configs(output_dir: Path, hf_config: dict) -> None:
             "embed_dim": 1024,
             "depth": 16,
             "num_heads": 8,
-            "cond_token_dim": 768,
+            "cond_token_dim": 768,  # nosec B105 — model config, not a password
             "global_cond_dim": 768,
             "project_cond_tokens": True,
             "timestep_features_dim": 256,
@@ -301,7 +301,9 @@ def _save_tokenizer(output_dir: Path, repo_id: str) -> None:
     print("Downloading tokenizer...")
     for source in [repo_id, "stabilityai/stable-audio-open-1.0"]:
         try:
-            tokenizer = AutoTokenizer.from_pretrained(source, subfolder="tokenizer")
+            tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — known HF repo
+                source, subfolder="tokenizer"
+            )
             tokenizer.save_pretrained(str(output_dir))
             print(f"Saved tokenizer to {output_dir}")
             return
@@ -311,7 +313,9 @@ def _save_tokenizer(output_dir: Path, repo_id: str) -> None:
 
     # Fallback to plain T5 tokenizer
     try:
-        tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-base")
+        tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — known HF repo
+            "google-t5/t5-base"
+        )
         tokenizer.save_pretrained(str(output_dir))
         print("Warning: Saved T5-base tokenizer as fallback.")
     except (OSError, ValueError, KeyError) as e:
