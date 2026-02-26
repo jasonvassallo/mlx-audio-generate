@@ -20,6 +20,7 @@ import numpy as np
 
 from mlx_audio_generate.shared.hub import (
     download_model,
+    load_pytorch_bin,
     load_safetensors,
     save_safetensors,
 )
@@ -102,6 +103,55 @@ def _remap_decoder_key(k: str) -> str:
     return k
 
 
+def _load_weights(model_path: Path) -> dict[str, np.ndarray]:
+    """Load model weights from safetensors or pytorch_model.bin.
+
+    Prefers safetensors format. Falls back to pytorch_model.bin
+    (requires torch: ``pip install mlx-audio-generate[convert]``).
+
+    Handles both single-file and sharded (multi-file) weight storage.
+    """
+    import glob
+
+    # 1. Single safetensors file
+    sf_file = model_path / "model.safetensors"
+    if sf_file.exists():
+        return load_safetensors(sf_file)
+
+    # 2. Sharded safetensors (model-00001-of-NNNNN.safetensors, ...)
+    sf_files = sorted(glob.glob(str(model_path / "model*.safetensors")))
+    if sf_files:
+        weights: dict[str, np.ndarray] = {}
+        for sf in sf_files:
+            shard = load_safetensors(sf)
+            weights.update(shard)
+            print(f"  Loaded {Path(sf).name}: {len(shard)} tensors")
+        return weights
+
+    # 3. Single pytorch_model.bin
+    pt_file = model_path / "pytorch_model.bin"
+    if pt_file.exists():
+        print("  No safetensors found, loading pytorch_model.bin (requires torch)...")
+        return load_pytorch_bin(pt_file)
+
+    # 4. Sharded pytorch_model-NNNNN-of-NNNNN.bin
+    pt_files = sorted(glob.glob(str(model_path / "pytorch_model-*.bin")))
+    if pt_files:
+        n = len(pt_files)
+        print(f"  No safetensors, loading {n} pytorch shards...")
+        weights = {}
+        for pt in pt_files:
+            shard = load_pytorch_bin(pt)
+            weights.update(shard)
+            print(f"  Loaded {Path(pt).name}: {len(shard)} tensors")
+        return weights
+
+    raise FileNotFoundError(
+        f"No model weight files found in {model_path}. "
+        "Expected model.safetensors or pytorch_model.bin."
+    )
+
+
 def convert_musicgen(
     repo_id: str,
     output_dir: str | Path,
@@ -117,34 +167,16 @@ def convert_musicgen(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download from HF
+    # Download from HF (include .bin files as fallback for repos without safetensors)
     print(f"Downloading {repo_id}...")
     model_path = download_model(
         repo_id,
-        allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model"],
+        allow_patterns=["*.json", "*.safetensors", "*.bin", "*.txt", "*.model"],
     )
 
-    # Load weights
+    # Load weights — prefer safetensors, fall back to pytorch_model.bin
     print("Loading weights...")
-    sf_file = model_path / "model.safetensors"
-    if not sf_file.exists():
-        # Some models may have sharded safetensors
-        import glob
-
-        sf_files = sorted(glob.glob(str(model_path / "model*.safetensors")))
-        if not sf_files:
-            raise FileNotFoundError(
-                f"No safetensors files found in {model_path}. "
-                "Ensure the model has model.safetensors."
-            )
-        # Load and merge all shards
-        weights = {}
-        for sf in sf_files:
-            shard = load_safetensors(sf)
-            weights.update(shard)
-            print(f"  Loaded {Path(sf).name}: {len(shard)} tensors")
-    else:
-        weights = load_safetensors(sf_file)
+    weights = _load_weights(model_path)
 
     # Load HF config
     hf_config = {}
@@ -182,8 +214,13 @@ def convert_musicgen(
             decoder_state[clean_k] = val
             continue
 
-        # --- enc_to_dec_proj ---
+        # --- enc_to_dec_proj (text) ---
         if k.startswith("enc_to_dec_proj."):
+            decoder_state[k] = val
+            continue
+
+        # --- audio_enc_to_dec_proj (melody variant: chroma projection) ---
+        if k.startswith("audio_enc_to_dec_proj."):
             decoder_state[k] = val
             continue
 
@@ -220,7 +257,7 @@ def convert_musicgen(
     save_safetensors(decoder_state, output_dir / "decoder.safetensors")
 
     # Save configs
-    _save_configs(output_dir, hf_config)
+    _save_configs(output_dir, hf_config, repo_id)
 
     # Save tokenizer
     _save_tokenizer(output_dir, repo_id)
@@ -228,8 +265,15 @@ def convert_musicgen(
     print(f"\nConversion complete! Weights saved to {output_dir}/")
 
 
-def _save_configs(output_dir: Path, hf_config: dict) -> None:
+def _save_configs(output_dir: Path, hf_config: dict, repo_id: str = "") -> None:
     """Write config.json and t5_config.json from HF's config."""
+    # Detect melody variant and annotate config
+    model_type = hf_config.get("model_type", "")
+    if "melody" in model_type or "melody" in repo_id.lower():
+        hf_config.setdefault("is_melody", True)
+        hf_config.setdefault("num_chroma", 12)
+        hf_config.setdefault("chroma_length", 235)
+
     # Save the full HF config as our config (from_dict handles the nesting)
     with open(output_dir / "config.json", "w") as f:
         json.dump(hf_config, f, indent=2)

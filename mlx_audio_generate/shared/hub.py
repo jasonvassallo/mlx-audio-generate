@@ -86,6 +86,26 @@ def load_all_safetensors(directory: str | Path) -> dict[str, np.ndarray]:
     return weights
 
 
+def load_pytorch_bin(path: str | Path) -> dict[str, np.ndarray]:
+    """Load a PyTorch .bin file and convert tensors to numpy arrays.
+
+    Requires torch to be installed (``pip install mlx-audio-generate[convert]``).
+    """
+    try:
+        import torch
+    except ImportError as exc:
+        raise ImportError(
+            "PyTorch is required to load .bin weight files. "
+            "Install it with: pip install mlx-audio-generate[convert]"
+        ) from exc
+
+    state_dict = torch.load(str(path), map_location="cpu", weights_only=True)
+    weights: dict[str, np.ndarray] = {}
+    for key, tensor in state_dict.items():
+        weights[key] = tensor.numpy()
+    return weights
+
+
 def save_safetensors(weights: dict[str, np.ndarray], path: str | Path) -> None:
     """Save a dict of numpy arrays as a safetensors file."""
     from safetensors.numpy import save_file

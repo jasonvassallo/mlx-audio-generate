@@ -99,6 +99,14 @@ def main():
         choices=["euler", "rk4"],
         help="ODE sampler (stable_audio only)",
     )
+    # MusicGen melody-specific
+    parser.add_argument(
+        "--melody",
+        type=str,
+        default=None,
+        help="Path to audio file for melody conditioning "
+        "(musicgen melody variants only)",
+    )
     # General
     parser.add_argument(
         "--weights-dir",
@@ -136,6 +144,16 @@ def main():
         print("Error: --guidance-coef must be non-negative")
         sys.exit(1)
 
+    # Validate melody path if provided
+    if args.melody is not None:
+        melody_file = Path(args.melody).resolve()
+        if not melody_file.is_file():
+            print(f"Error: Melody audio file not found: {args.melody}")
+            sys.exit(1)
+        if ".." in Path(args.melody).parts:
+            print("Error: Melody path must not contain '..'")
+            sys.exit(1)
+
     if args.model == "stable_audio":
         from mlx_audio_generate.models.stable_audio import StableAudioPipeline
 
@@ -162,6 +180,7 @@ def main():
             top_k=args.top_k,
             guidance_coef=args.guidance_coef,
             seed=args.seed,
+            melody_path=args.melody,
         )
         sample_rate = pipe.sample_rate
         channels = 1

@@ -25,10 +25,12 @@ import mlx.core as mx
 import numpy as np
 from transformers import AutoTokenizer
 
+from mlx_audio_generate.shared.audio_io import load_wav
 from mlx_audio_generate.shared.encodec import EncodecModel
 from mlx_audio_generate.shared.hub import load_safetensors
 from mlx_audio_generate.shared.t5 import T5Config, T5EncoderModel
 
+from .chroma import extract_chroma
 from .config import MusicGenConfig
 from .model import MusicGenModel
 
@@ -124,8 +126,9 @@ class MusicGenPipeline:
         temperature: float = 1.0,
         guidance_coef: float = 3.0,
         seed: Optional[int] = None,
+        melody_path: Optional[str] = None,
     ) -> np.ndarray:
-        """Generate audio from a text prompt.
+        """Generate audio from a text prompt, optionally conditioned on melody.
 
         Args:
             prompt: Text description of desired music.
@@ -135,6 +138,9 @@ class MusicGenPipeline:
             guidance_coef: Classifier-free guidance scale
                 (higher = more prompt-aligned).
             seed: Random seed for reproducibility.
+            melody_path: Path to audio file for melody conditioning
+                (melody variants only). The chromagram is extracted and
+                used as additional cross-attention conditioning.
 
         Returns:
             NumPy array of audio samples, shape (num_samples,), at self.sample_rate Hz.
@@ -177,16 +183,27 @@ class MusicGenPipeline:
         attention_mask = mx.array(text_inputs["attention_mask"])
         conditioning = self.t5(input_ids, attention_mask)
 
-        # Step 2: Generate audio tokens
+        # Step 2: Extract melody conditioning (melody variants only)
+        melody_cond = None
+        if self.config.is_melody:
+            melody_cond = _extract_melody(
+                melody_path,
+                self.sample_rate,
+                self.config.num_chroma,
+                self.config.chroma_length,
+            )
+
+        # Step 3: Generate audio tokens
         audio_tokens = self.model.generate(
             conditioning=conditioning,
             max_steps=max_steps,
             top_k=top_k,
             temperature=temperature,
             guidance_coef=guidance_coef,
+            melody_conditioning=melody_cond,
         )
 
-        # Step 3: Decode tokens to audio via EnCodec
+        # Step 4: Decode tokens to audio via EnCodec
         print("Decoding audio tokens...")
         # audio_tokens: (1, seq_len, num_codebooks)
         # EnCodec expects codes: (B, K, T) where K=num_codebooks
@@ -231,6 +248,39 @@ def _load_t5_config(weights_path: Path) -> T5Config:
             data = json.load(f)
         return T5Config.from_dict(data)
     return T5Config()
+
+
+def _extract_melody(
+    melody_path: Optional[str],
+    sample_rate: int,
+    num_chroma: int,
+    chroma_length: int,
+) -> mx.array:
+    """Extract chroma conditioning from an audio file or create default.
+
+    If ``melody_path`` is provided, loads the audio and extracts chromagram
+    features. Otherwise, creates a default one-hot vector (C note) so the
+    melody model can run in text-only mode.
+
+    Returns:
+        Chroma features as MLX array, shape (1, chroma_length, num_chroma).
+    """
+    if melody_path is not None:
+        print(f"Extracting melody features from {melody_path}...")
+        audio, sr = load_wav(melody_path)
+        chroma = extract_chroma(
+            audio,
+            sr=sr,
+            n_chroma=num_chroma,
+            chroma_length=chroma_length,
+        )
+    else:
+        # Default: single frame with first chroma bin = 1 (C note)
+        # This allows text-only generation on melody variants
+        chroma = np.zeros((1, chroma_length, num_chroma), dtype=np.float32)
+        chroma[:, :, 0] = 1.0
+
+    return mx.array(chroma)
 
 
 def _load_tokenizer(weights_path: Path, repo_id: str):

@@ -98,8 +98,11 @@ class StableAudioPipeline:
 
         # Build conditioners and load embedder weights
         print("Loading conditioners...")
-        conditioners = Conditioners(t5, tokenizer)
         cond_weights = load_safetensors(weights_path / "conditioners.safetensors")
+
+        # Detect if this is the 1.0 variant (has seconds_start weights)
+        has_start = any("seconds_start" in k for k in cond_weights)
+        conditioners = Conditioners(t5, tokenizer, has_seconds_start=has_start)
         conditioners.load_weights({k: mx.array(v) for k, v in cond_weights.items()})
 
         print("Pipeline ready.")

@@ -102,19 +102,33 @@ class MusicGenConfig:
 
     Can be loaded from HF's config.json via ``MusicGenConfig.from_dict(json_data)``
     or constructed with defaults for musicgen-small.
+
+    Melody variants add ``num_chroma`` and ``chroma_length`` for audio-based
+    conditioning via chromagram feature extraction.
     """
 
     decoder: DecoderConfig = field(default_factory=DecoderConfig)
     audio_encoder: AudioEncoderConfig = field(default_factory=AudioEncoderConfig)
     text_encoder: TextEncoderConfig = field(default_factory=TextEncoderConfig)
+    num_chroma: int = 12
+    chroma_length: int = 235
+    is_melody: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "MusicGenConfig":
         decoder = DecoderConfig.from_dict(d.get("decoder", {}))
         audio_encoder = AudioEncoderConfig.from_dict(d.get("audio_encoder", {}))
         text_encoder = TextEncoderConfig.from_dict(d.get("text_encoder", {}))
+
+        # Detect melody variant from model_type or explicit flag
+        model_type = d.get("model_type", "")
+        is_melody = "melody" in model_type or d.get("is_melody", False)
+
         return cls(
             decoder=decoder,
             audio_encoder=audio_encoder,
             text_encoder=text_encoder,
+            num_chroma=d.get("num_chroma", 12),
+            chroma_length=d.get("chroma_length", 235),
+            is_melody=is_melody,
         )

@@ -63,18 +63,29 @@ class NumberEmbedder(nn.Module):
 
 
 class Conditioners(nn.Module):
-    """Combines T5 text encoder and time embedder to produce DiT conditioning.
+    """Combines T5 text encoder and time embedders for DiT conditioning.
+
+    Supports both stable-audio-open-small (seconds_total only) and
+    stable-audio-open-1.0 (seconds_start + seconds_total).
 
     Returns:
-        cross_attn:  (1, 65, 768) — 64 T5 tokens + 1 time token
-        global_cond: (1, 768)     — time embedding for global conditioning
+        cross_attn:  (1, 65+, 768) — T5 tokens + time token(s)
+        global_cond: (1, 768)      — time embedding for global conditioning
     """
 
-    def __init__(self, t5_model: nn.Module, tokenizer):
+    def __init__(
+        self,
+        t5_model: nn.Module,
+        tokenizer,
+        has_seconds_start: bool = False,
+    ):
         super().__init__()
         self.t5 = t5_model
         self.tokenizer = tokenizer
+        self.has_seconds_start = has_seconds_start
         self.seconds_total = NumberEmbedder(128, 768)
+        if has_seconds_start:
+            self.seconds_start = NumberEmbedder(128, 768)
 
     def load_weights(self, cond_state: dict):  # type: ignore[override]
         """Load conditioner weights from the converted state dict.
@@ -83,27 +94,39 @@ class Conditioners(nn.Module):
             conditioner.conditioners.seconds_total.embedder.embedding.0.weights
             conditioner.conditioners.seconds_total.embedder.embedding.1.weight
             conditioner.conditioners.seconds_total.embedder.embedding.1.bias
+            conditioner.conditioners.seconds_start.embedder.embedding.0.weights
+            (etc., only for 1.0 variant)
         """
         total_weights = {}
+        start_weights = {}
         for k, v in cond_state.items():
             if "seconds_total" in k and "embedder." in k:
                 short_key = k.split("embedder.")[1]
                 total_weights[short_key] = v
+            elif "seconds_start" in k and "embedder." in k:
+                short_key = k.split("embedder.")[1]
+                start_weights[short_key] = v
 
         if total_weights:
             self.seconds_total.load_weights(total_weights)
+        if start_weights and self.has_seconds_start:
+            self.seconds_start.load_weights(start_weights)
 
     def __call__(
-        self, prompt: str, seconds_total: float | mx.array
+        self,
+        prompt: str,
+        seconds_total: float | mx.array,
+        seconds_start: float | mx.array = 0.0,
     ) -> tuple[mx.array, mx.array]:
         """Encode text + duration into conditioning tensors.
 
         Args:
             prompt: Text description of desired audio.
-            seconds_total: Duration in seconds.
+            seconds_total: Total duration in seconds.
+            seconds_start: Start time offset in seconds (1.0 variant only).
 
         Returns:
-            cross_attn:  (1, 65, 768)
+            cross_attn:  (1, 65+, 768)
             global_cond: (1, 768)
         """
         # Text encoding via T5
@@ -120,18 +143,33 @@ class Conditioners(nn.Module):
         t5_output = self.t5(input_ids, attn_mask)  # (1, 128, 768)
         t5_tokens = t5_output[:, :64, :]  # first 64 tokens
 
-        # Time embedding
-        seconds_arr: mx.array
-        if isinstance(seconds_total, (float, int)):
-            seconds_arr = mx.array([seconds_total])
-        else:
-            seconds_arr = seconds_total
+        # Time embeddings
+        total_arr = _to_mx_array(seconds_total)
+        total_emb = self.seconds_total(total_arr)  # (1, 768)
 
-        time_emb = self.seconds_total(seconds_arr)  # (1, 768)
+        time_tokens = [total_emb[:, None, :]]  # (1, 1, 768)
+        global_parts = [total_emb]
 
-        # Outputs
-        global_cond = time_emb
-        time_token = time_emb[:, None, :]  # (1, 1, 768)
-        cross_attn = mx.concatenate([t5_tokens, time_token], axis=1)  # (1, 65, 768)
+        if self.has_seconds_start:
+            start_arr = _to_mx_array(seconds_start)
+            start_emb = self.seconds_start(start_arr)
+            time_tokens.append(start_emb[:, None, :])
+            global_parts.append(start_emb)
+
+        # Combine text + time tokens for cross-attention
+        cross_parts = [t5_tokens] + time_tokens
+        cross_attn = mx.concatenate(cross_parts, axis=1)
+
+        # Global conditioning = sum of time embeddings
+        global_cond = global_parts[0]
+        for g in global_parts[1:]:
+            global_cond = global_cond + g
 
         return cross_attn, global_cond
+
+
+def _to_mx_array(val: float | int | mx.array) -> mx.array:
+    """Convert scalar or mx.array to a batched mx.array."""
+    if isinstance(val, (float, int)):
+        return mx.array([val])
+    return val

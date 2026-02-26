@@ -33,6 +33,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+convert = [
+    "torch>=2.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "ruff>=0.4.0",

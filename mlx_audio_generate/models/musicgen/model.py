@@ -48,6 +48,7 @@ class MusicGenModel(nn.Module):
         self.hidden_size = dec.hidden_size
         self.num_attention_heads = dec.num_attention_heads
         self.bos_token_id = dec.bos_token_id  # 2048 (= codebook_size, used as BOS)
+        self.is_melody = config.is_melody
 
         # Per-codebook embeddings: vocab_size+1 to include BOS token at index 2048
         self.embed_tokens = [
@@ -77,6 +78,10 @@ class MusicGenModel(nn.Module):
         # T5 encoder -> decoder projection (768 -> hidden_size)
         t5_dim = config.text_encoder.d_model
         self.enc_to_dec_proj = nn.Linear(t5_dim, self.hidden_size)
+
+        # Melody variant: chroma -> decoder projection (12 -> hidden_size)
+        if self.is_melody:
+            self.audio_enc_to_dec_proj = nn.Linear(config.num_chroma, self.hidden_size)
 
     def __call__(
         self,
@@ -128,6 +133,7 @@ class MusicGenModel(nn.Module):
         top_k: int = 250,
         temperature: float = 1.0,
         guidance_coef: float = 3.0,
+        melody_conditioning: Optional[mx.array] = None,
     ) -> mx.array:
         """Autoregressive generation with codebook delay pattern and CFG.
 
@@ -138,12 +144,20 @@ class MusicGenModel(nn.Module):
             top_k: Number of top candidates for sampling.
             temperature: Softmax temperature.
             guidance_coef: Classifier-free guidance coefficient.
+            melody_conditioning: Optional chroma features for melody variants,
+                shape (1, chroma_len, num_chroma). Will be projected via
+                audio_enc_to_dec_proj and concatenated with text conditioning.
 
         Returns:
             Audio tokens of shape (1, seq_len, num_codebooks) with delay undone.
         """
         # Project T5 conditioning to decoder dimension
         projected_cond = self.enc_to_dec_proj(conditioning)
+
+        # For melody variants: project chroma and concatenate with text
+        if self.is_melody and melody_conditioning is not None:
+            projected_melody = self.audio_enc_to_dec_proj(melody_conditioning)
+            projected_cond = mx.concatenate([projected_melody, projected_cond], axis=1)
 
         # Duplicate for CFG: [conditional, unconditional] batch
         cond_batch = mx.concatenate(
