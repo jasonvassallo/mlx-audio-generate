@@ -4,17 +4,19 @@ Thin Node for Max HTTP client for generating music directly inside Ableton Live.
 
 ## Setup
 
-1. **Start the server** (in a terminal):
+1. **Build the M4L device** (one-time, see [Building the .amxd](#building-the-amxd) below)
+
+2. **Start the server** (in a terminal):
    ```bash
-   mlx-audiogen-server --weights-dir ./converted/musicgen-small --port 8420
+   uv run mlx-audiogen-server --weights-dir ./converted/musicgen-small --port 8420
    ```
 
-2. **Load the M4L device** in Ableton:
+3. **Load the M4L device** in Ableton:
    - Create a new MIDI track
-   - Drag `mlx-audiogen.amxd` onto the track
+   - Drag the built `.amxd` device onto the track
    - The device connects to `localhost:8420` by default
 
-3. **Generate audio**:
+4. **Generate audio**:
    - Type a prompt in the text field
    - Click "Generate" or send a `generate` message
    - The WAV is auto-saved and the path is output for drag-to-track

@@ -51,9 +51,9 @@ mlx-audiogen-convert = "mlx_audiogen.cli.convert:main"
 mlx-audiogen-server = "mlx_audiogen.server:main"
 
 [project.urls]
-Homepage = "https://github.com/jasonvassallo/mlx-audio-generate"
-Repository = "https://github.com/jasonvassallo/mlx-audio-generate"
-HuggingFace = "https://huggingface.co/jasonvassallo/mlx-audio-generate"
+Homepage = "https://github.com/jasonvassallo/mlx-audiogen"
+Repository = "https://github.com/jasonvassallo/mlx-audiogen"
+HuggingFace = "https://huggingface.co/jasonvassallo/mlx-audiogen"
 
 [build-system]
 requires = ["hatchling"]

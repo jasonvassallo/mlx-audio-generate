@@ -62,11 +62,17 @@ class GenerateRequest(BaseModel):
 
     model: str = Field(
         default="musicgen",
+        pattern=r"^(musicgen|stable_audio)$",
         description="Model type: 'musicgen' or 'stable_audio'",
     )
-    prompt: str = Field(..., description="Text description of desired audio")
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="Text description of desired audio",
+    )
     negative_prompt: str = Field(
-        default="", description="Negative prompt (stable_audio only)"
+        default="", max_length=5000, description="Negative prompt (stable_audio only)"
     )
     seconds: float = Field(
         default=5.0, ge=0.1, le=300, description="Duration in seconds"
@@ -78,12 +84,12 @@ class GenerateRequest(BaseModel):
     # Stable Audio params
     steps: int = Field(default=8, ge=1, le=1000)
     cfg_scale: float = Field(default=6.0, ge=0)
-    sampler: str = Field(default="euler")
+    sampler: str = Field(default="euler", pattern=r"^(euler|rk4)$")
     # General
     seed: Optional[int] = Field(default=None)
-    # Style/melody: paths relative to server's CWD
-    melody_path: Optional[str] = Field(default=None)
-    style_audio_path: Optional[str] = Field(default=None)
+    # Style/melody: paths are validated in _validate_audio_path() before use
+    melody_path: Optional[str] = Field(default=None, max_length=1024)
+    style_audio_path: Optional[str] = Field(default=None, max_length=1024)
     style_coef: float = Field(default=5.0, ge=0)
 
 
@@ -113,7 +119,6 @@ class ModelInfo(BaseModel):
 
     name: str
     model_type: str
-    weights_dir: str
     is_loaded: bool
 
 
@@ -230,7 +235,7 @@ def list_models() -> list[ModelInfo]:
     """List available models and their loading status."""
     result = []
     loaded_keys = _pipeline_cache.keys()
-    for name, path in _weights_dirs.items():
+    for name in _weights_dirs:
         # Determine model type from name
         if "stable" in name.lower():
             model_type = "stable_audio"
@@ -240,7 +245,6 @@ def list_models() -> list[ModelInfo]:
             ModelInfo(
                 name=name,
                 model_type=model_type,
-                weights_dir=path,
                 is_loaded=name in loaded_keys,
             )
         )
@@ -250,6 +254,10 @@ def list_models() -> list[ModelInfo]:
 @app.post("/api/generate")
 def submit_generation(req: GenerateRequest) -> GenerateResponse:
     """Submit a generation request. Returns immediately with a job ID."""
+    # Validate audio file paths (rejects traversal, missing files, bad extensions)
+    req.melody_path = _validate_audio_path(req.melody_path, "melody")
+    req.style_audio_path = _validate_audio_path(req.style_audio_path, "style_audio")
+
     # Enforce job limit
     if len(_jobs) >= _max_jobs:
         _cleanup_old_jobs()
@@ -437,6 +445,32 @@ def _generate_stable_audio(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _validate_audio_path(path_str: Optional[str], label: str) -> Optional[str]:
+    """Validate an audio file path from a client request.
+
+    Rejects path traversal, non-existent files, and non-file paths.
+    Returns the resolved path string if valid, None if input is None.
+
+    Raises HTTPException on invalid paths.
+    """
+    if path_str is None:
+        return None
+    p = Path(path_str)
+    # Reject path traversal
+    if ".." in p.parts:
+        raise HTTPException(400, f"Invalid {label} path: must not contain '..'")
+    resolved = p.resolve()
+    if not resolved.is_file():
+        raise HTTPException(400, f"Invalid {label} path: file not found")
+    # Restrict to common audio extensions
+    allowed_exts = {".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a", ".aiff"}
+    if resolved.suffix.lower() not in allowed_exts:
+        raise HTTPException(
+            400, f"Invalid {label} path: unsupported file type '{resolved.suffix}'"
+        )
+    return str(resolved)
 
 
 def _encode_wav(audio: np.ndarray, sample_rate: int, channels: int) -> bytes:

@@ -41,6 +41,16 @@ uv run mypy mlx_audiogen/
 uv run bandit -r mlx_audiogen/ -c pyproject.toml
 uv run pip-audit
 
+# Start HTTP server (requires server extra)
+uv sync --extra server
+uv run mlx-audiogen-server --weights-dir ./converted/musicgen-small --port 8420
+
+# Multiple models (LRU cache keeps 2 most recently used loaded)
+uv run mlx-audiogen-server \
+  --weights-dir ./converted/musicgen-small \
+  --weights-dir ./converted/stable-audio \
+  --port 8420
+
 # Quick import smoke test (no weights needed)
 uv run python -c "from mlx_audiogen.models.musicgen import MusicGenPipeline; print('OK')"
 ```
@@ -65,9 +75,13 @@ mlx_audiogen/
 │   │   └── style_conditioner.py  # Style transformer + RVQ + BatchNorm
 │   └── stable_audio/ # Diffusion: T5 -> DiT (rectified flow) -> VAE decode
 │       ├── config.py, dit.py, vae.py, conditioners.py, sampling.py, pipeline.py, convert.py
-└── cli/
-    ├── generate.py   # Unified CLI: --model {musicgen,stable_audio}
-    └── convert.py    # Unified conversion: auto-detects model type from repo ID
+├── server/
+│   └── app.py        # FastAPI HTTP server with LRU pipeline cache + async jobs
+├── cli/
+│   ├── generate.py   # Unified CLI: --model {musicgen,stable_audio}
+│   └── convert.py    # Unified conversion: auto-detects model type from repo ID
+m4l/
+└── mlx-audiogen.js   # Node for Max HTTP client for Ableton Live integration
 ```
 
 **MusicGen pipeline flow:** tokenize text -> T5 encode -> `enc_to_dec_proj` -> autoregressive transformer with KV cache + classifier-free guidance + codebook delay pattern -> top-k sampling -> EnCodec decode -> 32kHz mono WAV
@@ -79,6 +93,38 @@ mlx_audiogen/
 **Stable Audio pipeline flow:** tokenize text -> T5 encode + NumberEmbedder time conditioning -> rectified flow ODE sampling (euler/rk4) through DiT -> Oobleck VAE decode -> 44.1kHz stereo WAV
 
 **Stable Audio 1.0 variant:** adds a `seconds_start` NumberEmbedder alongside `seconds_total`, auto-detected from conditioner weights at load time
+
+## HTTP Server Architecture
+
+`server/app.py` provides an async FastAPI server for tool integration (Max for Live, web UIs, external scripts):
+
+- **LRU Pipeline Cache** (`PipelineCache`): `OrderedDict`-based cache using `move_to_end()` / `popitem(last=False)` to keep N most-recently-used model pipelines loaded. Default max_size=2. Eviction prints a message to stdout.
+- **Async Job Queue**: Generation requests return immediately with a job ID. A single-thread `ThreadPoolExecutor` runs generation (MLX is GPU-bound). Jobs are polled via `/api/status/{id}`.
+- **In-memory WAV encoding**: Completed audio is stored as numpy arrays and encoded to WAV bytes on download via soundfile into `io.BytesIO`.
+- **Job cleanup**: Completed/errored jobs older than 5 minutes are cleaned up when the job limit (100) is reached.
+- **CORS**: Enabled for all origins to support localhost Max for Live / browser clients.
+- **Server binds to `127.0.0.1` by default** (localhost only — not exposed to network).
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/generate` | Submit generation request (returns job ID) |
+| `GET` | `/api/status/{id}` | Poll job status (`queued`/`running`/`done`/`error`) |
+| `GET` | `/api/audio/{id}` | Download generated WAV |
+| `GET` | `/api/models` | List available models and loading status |
+
+Interactive API docs at `http://localhost:8420/docs` when running.
+
+## Max for Live Integration
+
+`m4l/mlx-audiogen.js` is a Node for Max script that connects Ableton Live to the HTTP server:
+
+- **Architecture**: Max for Live UI (dials, text) -> Node for Max (JS) -> HTTP POST to server -> poll status -> download WAV -> output path for drag-to-track
+- **Messages from Max**: `generate <prompt>`, `model <name>`, `seconds <float>`, `temperature`, `top_k`, `guidance`, `steps`, `cfg_scale`, `seed`, `server <host:port>`, `style_audio <path>`, `style_coef <float>`, `melody <path>`
+- **Messages to Max**: `status <text>`, `progress <0-100>`, `audio <filepath>`, `error <text>`, `models <json>`
+- **Defaults**: connects to `127.0.0.1:8420`, saves WAVs to OS temp dir (`mlx-audiogen/`)
+- **Input clamping**: All numeric values use `Math.max`/`Math.min` to prevent out-of-range values
 
 ## Critical MLX Patterns
 
@@ -143,7 +189,14 @@ All user inputs are validated in `cli/generate.py` and `cli/convert.py` before r
 - **Weights directory validation**: Must exist, be a directory, and resolve cleanly
 - **Numeric range validation**: Duration, temperature, top-k, steps, and guidance scales are range-checked
 - **Repo ID whitelist**: `cli/convert.py` maintains a whitelist of known-safe HuggingFace repos; non-whitelisted repos require `--trust-remote-code`
-- **Melody path validation**: Melody audio file path is checked for existence and path traversal
+- **Melody/style path validation**: Audio file paths checked for existence, path traversal, and valid extension
+
+### Server-Side Input Validation
+The HTTP server (`server/app.py`) validates all request fields via Pydantic and a custom path validator:
+- **Pydantic Field validators**: `model` field uses `pattern=r"^(musicgen|stable_audio)$"` regex; `sampler` uses `pattern=r"^(euler|rk4)$"`; numeric fields use `ge`/`le`/`gt` constraints; string fields use `min_length`/`max_length`
+- **Audio path validation** (`_validate_audio_path()`): Rejects `..` traversal in path components, verifies file existence, and enforces an audio extension whitelist (`.wav`, `.mp3`, `.flac`, `.ogg`, `.aac`, `.m4a`, `.aiff`)
+- **No filesystem path leaks**: The `/api/models` endpoint returns model name and type only — never the `weights_dir` filesystem path
+- **Job limit**: Max 100 concurrent jobs with automatic cleanup of completed jobs older than 5 minutes
 
 ### Exception Handling
 Use specific exception types (`OSError`, `ValueError`, `KeyError`) instead of bare `except Exception`. This prevents silently swallowing real bugs while still handling expected failures like missing files or network errors.

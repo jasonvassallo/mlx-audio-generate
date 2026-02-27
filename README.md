@@ -103,10 +103,10 @@ An optional FastAPI server enables integration with external tools like Ableton 
 uv sync --extra server
 
 # Start the server with one or more model weights
-mlx-audiogen-server --weights-dir ./converted/musicgen-small --port 8420
+uv run mlx-audiogen-server --weights-dir ./converted/musicgen-small --port 8420
 
 # Multiple models (LRU cache keeps the 2 most recently used loaded)
-mlx-audiogen-server \
+uv run mlx-audiogen-server \
   --weights-dir ./converted/musicgen-small \
   --weights-dir ./converted/stable-audio \
   --port 8420
@@ -125,7 +125,7 @@ Interactive API docs are available at `http://localhost:8420/docs` when the serv
 
 ## Max for Live Integration
 
-A Node for Max device (`m4l/mlx-audiogen.amxd`) connects Ableton Live directly to the HTTP server for generating audio from within your session:
+A Node for Max client (`m4l/mlx-audiogen.js`) connects Ableton Live directly to the HTTP server for generating audio from within your session:
 
 1. Start the server (see above)
 2. Load the Max for Live device onto a MIDI track
