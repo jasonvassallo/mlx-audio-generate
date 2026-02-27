@@ -15,8 +15,8 @@
 ### Task 1: EnCodec Shared Module
 
 **Files:**
-- Create: `mlx_audio_generate/shared/encodec.py`
-- Modify: `mlx_audio_generate/shared/__init__.py`
+- Create: `mlx_audiogen/shared/encodec.py`
+- Modify: `mlx_audiogen/shared/__init__.py`
 
 **What:** Port Apple's `encodec.py` (741 lines) into our shared module. This includes:
 - Custom Metal LSTM kernel (`_lstm_kernel` + `lstm_custom` + `LSTM` class)
@@ -31,7 +31,7 @@ Key adaptations from Apple's code:
 - Ensure `from_pretrained()` works with our `shared.hub.download_model()` if possible
 - Add proper docstrings
 
-**Verify:** `python -c "from mlx_audio_generate.shared.encodec import EncodecModel; print('OK')"`
+**Verify:** `python -c "from mlx_audiogen.shared.encodec import EncodecModel; print('OK')"`
 
 **Commit:** `feat: add EnCodec shared module (ported from mlx-examples)`
 
@@ -40,7 +40,7 @@ Key adaptations from Apple's code:
 ### Task 2: MusicGen Config
 
 **Files:**
-- Create: `mlx_audio_generate/models/musicgen/config.py`
+- Create: `mlx_audiogen/models/musicgen/config.py`
 
 **What:** Config dataclass that reads from HuggingFace's `config.json`. Needs to handle the nested structure:
 ```json
@@ -53,7 +53,7 @@ Key adaptations from Apple's code:
 
 Classes: `DecoderConfig`, `AudioEncoderConfig`, `TextEncoderConfig`, `MusicGenConfig` — each with `from_dict()`.
 
-**Verify:** `python -c "from mlx_audio_generate.models.musicgen.config import MusicGenConfig; c = MusicGenConfig(); print(c.decoder.hidden_size)"`
+**Verify:** `python -c "from mlx_audiogen.models.musicgen.config import MusicGenConfig; c = MusicGenConfig(); print(c.decoder.hidden_size)"`
 
 **Commit:** `feat: add MusicGen config`
 
@@ -62,7 +62,7 @@ Classes: `DecoderConfig`, `AudioEncoderConfig`, `TextEncoderConfig`, `MusicGenCo
 ### Task 3: MusicGen Transformer Decoder
 
 **Files:**
-- Create: `mlx_audio_generate/models/musicgen/transformer.py`
+- Create: `mlx_audiogen/models/musicgen/transformer.py`
 
 **What:** The autoregressive transformer with KV cache support. Components:
 
@@ -88,7 +88,7 @@ Weight key mapping from HF checkpoint:
 ### Task 4: MusicGen Model (Embeddings + LM Heads + Generation)
 
 **Files:**
-- Create: `mlx_audio_generate/models/musicgen/model.py`
+- Create: `mlx_audiogen/models/musicgen/model.py`
 
 **What:** The main model class that ties embeddings, transformer, and output heads together.
 
@@ -125,7 +125,7 @@ Weight keys from HF:
 ### Task 5: MusicGen Pipeline
 
 **Files:**
-- Create: `mlx_audio_generate/models/musicgen/pipeline.py`
+- Create: `mlx_audiogen/models/musicgen/pipeline.py`
 
 **What:** High-level pipeline that loads T5 + decoder + EnCodec and orchestrates generation.
 
@@ -148,7 +148,7 @@ Weight keys from HF:
 ### Task 6: MusicGen Weight Conversion
 
 **Files:**
-- Create: `mlx_audio_generate/models/musicgen/convert.py`
+- Create: `mlx_audiogen/models/musicgen/convert.py`
 
 **What:** Convert HF `model.safetensors` into our split format.
 
@@ -183,13 +183,13 @@ Also saves: `config.json` (model config), `t5_config.json`, tokenizer
 ### Task 7: Wire Up Exports & CLI
 
 **Files:**
-- Modify: `mlx_audio_generate/models/musicgen/__init__.py`
-- Verify: `mlx_audio_generate/cli/generate.py` (already has musicgen dispatch)
-- Verify: `mlx_audio_generate/cli/convert.py` (already has musicgen dispatch)
+- Modify: `mlx_audiogen/models/musicgen/__init__.py`
+- Verify: `mlx_audiogen/cli/generate.py` (already has musicgen dispatch)
+- Verify: `mlx_audiogen/cli/convert.py` (already has musicgen dispatch)
 
 **What:** Update `__init__.py` to export `MusicGenPipeline`, `MusicGenModel`, `MusicGenConfig`, `convert_musicgen`. Verify CLI stubs work with the new imports.
 
-**Verify:** `python -c "from mlx_audio_generate.models.musicgen import MusicGenPipeline; print('OK')"`
+**Verify:** `python -c "from mlx_audiogen.models.musicgen import MusicGenPipeline; print('OK')"`
 
 **Commit:** `feat: wire up MusicGen exports and CLI`
 

@@ -12,15 +12,19 @@ uv sync
 uv sync --extra convert
 
 # Run generation CLI
-uv run mlx-audio-generate --model musicgen --prompt "happy rock song" --seconds 5 --weights-dir ./converted/musicgen-small
-uv run mlx-audio-generate --model stable_audio --prompt "ambient pad" --seconds 10 --weights-dir ./converted/stable-audio
+uv run mlx-audiogen --model musicgen --prompt "happy rock song" --seconds 5 --weights-dir ./converted/musicgen-small
+uv run mlx-audiogen --model stable_audio --prompt "ambient pad" --seconds 10 --weights-dir ./converted/stable-audio
 
 # Melody conditioning (melody variants only)
-uv run mlx-audio-generate --model musicgen --prompt "orchestral strings" --melody input.wav --seconds 10 --weights-dir ./converted/musicgen-melody
+uv run mlx-audiogen --model musicgen --prompt "orchestral strings" --melody input.wav --seconds 10 --weights-dir ./converted/musicgen-melody
+
+# Style conditioning (style variants only)
+uv run mlx-audiogen --model musicgen --prompt "upbeat electronic" --style-audio reference.wav --seconds 10 --weights-dir ./converted/musicgen-style
 
 # Run weight conversion (must be done per model variant before generation)
-uv run mlx-audio-convert --model facebook/musicgen-small --output ./converted/musicgen-small
-uv run mlx-audio-convert --model stabilityai/stable-audio-open-small --output ./converted/stable-audio
+uv run mlx-audiogen-convert --model facebook/musicgen-small --output ./converted/musicgen-small
+uv run mlx-audiogen-convert --model facebook/musicgen-style --output ./converted/musicgen-style
+uv run mlx-audiogen-convert --model stabilityai/stable-audio-open-small --output ./converted/stable-audio
 
 # Run tests
 uv run pytest
@@ -31,14 +35,14 @@ uv run ruff check .
 uv run ruff format .
 
 # Type checking
-uv run mypy mlx_audio_generate/
+uv run mypy mlx_audiogen/
 
 # Security audit
-uv run bandit -r mlx_audio_generate/ -c pyproject.toml
+uv run bandit -r mlx_audiogen/ -c pyproject.toml
 uv run pip-audit
 
 # Quick import smoke test (no weights needed)
-uv run python -c "from mlx_audio_generate.models.musicgen import MusicGenPipeline; print('OK')"
+uv run python -c "from mlx_audiogen.models.musicgen import MusicGenPipeline; print('OK')"
 ```
 
 ## Architecture
@@ -46,7 +50,7 @@ uv run python -c "from mlx_audio_generate.models.musicgen import MusicGenPipelin
 Two audio generation models sharing a common infrastructure layer:
 
 ```
-mlx_audio_generate/
+mlx_audiogen/
 ├── shared/           # Components used by both models
 │   ├── t5.py         # T5 encoder (text conditioning for both models)
 │   ├── encodec.py    # EnCodec audio codec (used by MusicGen, inlined from mlx-examples)
@@ -56,7 +60,9 @@ mlx_audio_generate/
 ├── models/
 │   ├── musicgen/     # Autoregressive: T5 -> transformer decoder -> EnCodec decode
 │   │   ├── config.py, transformer.py, model.py, pipeline.py, convert.py
-│   │   └── chroma.py # Chromagram extraction for melody conditioning
+│   │   ├── chroma.py # Chromagram extraction for melody conditioning
+│   │   ├── mert.py   # MERT feature extractor for style conditioning
+│   │   └── style_conditioner.py  # Style transformer + RVQ + BatchNorm
 │   └── stable_audio/ # Diffusion: T5 -> DiT (rectified flow) -> VAE decode
 │       ├── config.py, dit.py, vae.py, conditioners.py, sampling.py, pipeline.py, convert.py
 └── cli/
@@ -67,6 +73,8 @@ mlx_audio_generate/
 **MusicGen pipeline flow:** tokenize text -> T5 encode -> `enc_to_dec_proj` -> autoregressive transformer with KV cache + classifier-free guidance + codebook delay pattern -> top-k sampling -> EnCodec decode -> 32kHz mono WAV
 
 **MusicGen melody flow:** same as above, but also extracts a 12-bin chromagram from the melody audio, projects it via `audio_enc_to_dec_proj`, and concatenates with T5 tokens for cross-attention conditioning
+
+**MusicGen style flow:** MERT extracts features from reference audio at 75Hz -> Linear(768→512) -> 8-layer style transformer -> BatchNorm -> RVQ(3 codebooks) -> downsample by 15 -> concatenate with T5 tokens for cross-attention. Generation uses dual-CFG with 3 forward passes per step: `uncond + cfg * (style + beta * (full - style) - uncond)`
 
 **Stable Audio pipeline flow:** tokenize text -> T5 encode + NumberEmbedder time conditioning -> rectified flow ODE sampling (euler/rk4) through DiT -> Oobleck VAE decode -> 44.1kHz stereo WAV
 
@@ -117,6 +125,9 @@ Module attribute names are chosen to match HuggingFace safetensors keys after pr
 | stereo-large | `facebook/musicgen-stereo-large` | sharded safetensors | 8 | Stereo |
 | melody | `facebook/musicgen-melody` | sharded safetensors | 4 | Mono |
 | melody-large | `facebook/musicgen-melody-large` | sharded safetensors | 4 | Mono |
+| stereo-melody | `facebook/musicgen-stereo-melody` | sharded safetensors | 8 | Stereo |
+| stereo-melody-large | `facebook/musicgen-stereo-melody-large` | sharded safetensors | 8 | Stereo |
+| style | `facebook/musicgen-style` | audiocraft state_dict.bin | 4 | Mono |
 
 ### Stable Audio
 | Variant | HF Repo | Notes |
@@ -167,3 +178,23 @@ The melody pipeline extracts a chromagram (12-bin pitch class profile) from audi
 5. Concatenated with T5 text tokens for cross-attention in the decoder
 
 Melody variants auto-detected from HF config (`model_type: "musicgen_melody"`) during conversion.
+
+## MusicGen Style Conditioning
+
+Style variants use a frozen MERT feature extractor + style conditioner pipeline:
+1. MERT extracts features from reference audio at 75Hz → (B, T, 768)
+2. Linear projection: 768 → 512 (style_dim)
+3. 8-layer pre-norm transformer encoder (512 dim, 8 heads, 2048 FFN)
+4. BatchNorm1d (affine=False, inference mode with running stats)
+5. RVQ with 3 codebooks (1024 bins each) — progressive residual quantization
+6. Downsample by factor 15 → final style tokens for cross-attention
+
+Generation uses dual-CFG (3 forward passes per step):
+- Full: text + style conditioning
+- Style-only: style tokens + zeroed text
+- Unconditional: all zeros
+- Formula: `uncond + cfg * (style + beta * (full - style) - uncond)`
+- Default: `cfg=3.0`, `beta=5.0`
+
+Style model uses audiocraft format (`state_dict.bin`) not HF transformers.
+MERT weights downloaded separately from `m-a-p/MERT-v1-95M`.

@@ -21,12 +21,12 @@ from pathlib import Path
 
 import numpy as np
 
-from mlx_audio_generate.shared.hub import (
+from mlx_audiogen.shared.hub import (
     download_model,
     load_safetensors,
     save_safetensors,
 )
-from mlx_audio_generate.shared.mlx_utils import (
+from mlx_audiogen.shared.mlx_utils import (
     fuse_weight_norm,
     transpose_conv1d_weight,
     transpose_conv_transpose1d_weight,

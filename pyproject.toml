@@ -1,5 +1,5 @@
 [project]
-name = "mlx-audio-generate"
+name = "mlx-audiogen"
 version = "0.1.0"
 description = "Music and audio generation on Apple Silicon using MLX - MusicGen and Stable Audio Open"
 readme = "README.md"
@@ -36,14 +36,19 @@ dependencies = [
 convert = [
     "torch>=2.0.0",
 ]
+server = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+]
 dev = [
     "pytest>=7.0.0",
     "ruff>=0.4.0",
 ]
 
 [project.scripts]
-mlx-audio-generate = "mlx_audio_generate.cli.generate:main"
-mlx-audio-convert = "mlx_audio_generate.cli.convert:main"
+mlx-audiogen = "mlx_audiogen.cli.generate:main"
+mlx-audiogen-convert = "mlx_audiogen.cli.convert:main"
+mlx-audiogen-server = "mlx_audiogen.server:main"
 
 [project.urls]
 Homepage = "https://github.com/jasonvassallo/mlx-audio-generate"

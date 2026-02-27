@@ -1,4 +1,4 @@
-# mlx-audio-generate
+# mlx-audiogen
 
 Text-to-audio generation on Apple Silicon using [MLX](https://github.com/ml-explore/mlx). Supports **MusicGen** (including melody and stereo variants) and **Stable Audio Open**.
 
@@ -11,6 +11,8 @@ Runs entirely on-device via Metal GPU — no cloud API needed.
 | MusicGen | small, medium, large | Mono | 32 kHz | Autoregressive (T5 + Transformer + EnCodec) |
 | MusicGen Stereo | small, medium, large | Stereo | 32 kHz | Autoregressive (8 codebooks) |
 | MusicGen Melody | base, large | Mono | 32 kHz | Autoregressive + Chroma conditioning |
+| MusicGen Stereo Melody | base, large | Stereo | 32 kHz | Autoregressive (8 codebooks + Chroma) |
+| MusicGen Style | base | Mono | 32 kHz | Autoregressive + MERT style conditioning |
 | Stable Audio Open | small | Stereo | 44.1 kHz | Diffusion (T5 + DiT + Oobleck VAE) |
 | Stable Audio Open | 1.0 | Stereo | 44.1 kHz | Diffusion (larger DiT, dual time conditioning) |
 
@@ -18,15 +20,15 @@ Runs entirely on-device via Metal GPU — no cloud API needed.
 
 ```bash
 # Install
-git clone https://github.com/jasonvassallo/mlx-audio-generate
-cd mlx-audio-generate
+git clone https://github.com/jasonvassallo/mlx-audiogen
+cd mlx-audiogen
 uv sync
 
 # Convert weights (one-time per model variant)
-uv run mlx-audio-convert --model facebook/musicgen-small --output ./converted/musicgen-small
+uv run mlx-audiogen-convert --model facebook/musicgen-small --output ./converted/musicgen-small
 
 # Generate audio
-uv run mlx-audio-generate \
+uv run mlx-audiogen \
   --model musicgen \
   --prompt "happy upbeat rock song with electric guitar" \
   --seconds 10 \
@@ -38,10 +40,10 @@ uv run mlx-audio-generate \
 
 ```bash
 # Convert weights
-uv run mlx-audio-convert --model stabilityai/stable-audio-open-small --output ./converted/stable-audio
+uv run mlx-audiogen-convert --model stabilityai/stable-audio-open-small --output ./converted/stable-audio
 
 # Generate (stereo, 44.1kHz)
-uv run mlx-audio-generate \
+uv run mlx-audiogen \
   --model stable_audio \
   --prompt "ambient electronic pad with warm reverb" \
   --seconds 15 \
@@ -57,10 +59,10 @@ MusicGen melody variants can condition generation on an existing audio file, ext
 
 ```bash
 # Convert a melody variant
-uv run mlx-audio-convert --model facebook/musicgen-melody --output ./converted/musicgen-melody
+uv run mlx-audiogen-convert --model facebook/musicgen-melody --output ./converted/musicgen-melody
 
 # Generate with melody conditioning
-uv run mlx-audio-generate \
+uv run mlx-audiogen \
   --model musicgen \
   --prompt "orchestral arrangement with strings" \
   --melody my_humming.wav \
@@ -70,6 +72,66 @@ uv run mlx-audio-generate \
 ```
 
 The `--melody` flag accepts any WAV file. The pipeline extracts a 12-bin chromagram (one-hot pitch class per frame) and uses it as additional cross-attention conditioning alongside the text prompt. Melody variants also work without `--melody` for text-only generation.
+
+### Style Conditioning Example
+
+MusicGen style variants use a frozen MERT audio feature extractor to capture the timbre and texture of a reference audio clip, then guide generation via dual classifier-free guidance:
+
+```bash
+# Convert the style variant (uses audiocraft format, downloads MERT weights)
+uv run mlx-audiogen-convert --model facebook/musicgen-style --output ./converted/musicgen-style
+
+# Generate with style conditioning
+uv run mlx-audiogen \
+  --model musicgen \
+  --prompt "upbeat electronic dance music" \
+  --style-audio reference_track.wav \
+  --style-coef 5.0 \
+  --seconds 10 \
+  --weights-dir ./converted/musicgen-style \
+  --output styled.wav
+```
+
+The `--style-audio` flag accepts any WAV file as a timbre reference. The pipeline uses dual-CFG with three forward passes per step to blend text semantics with audio style. `--style-coef` controls how strongly the text prompt influences the output relative to the style (default: 5.0). Style variants also work without `--style-audio` for text-only generation.
+
+## HTTP Server
+
+An optional FastAPI server enables integration with external tools like Ableton Live (via Max for Live), web UIs, or any HTTP client:
+
+```bash
+# Install server dependencies
+uv sync --extra server
+
+# Start the server with one or more model weights
+mlx-audiogen-server --weights-dir ./converted/musicgen-small --port 8420
+
+# Multiple models (LRU cache keeps the 2 most recently used loaded)
+mlx-audiogen-server \
+  --weights-dir ./converted/musicgen-small \
+  --weights-dir ./converted/stable-audio \
+  --port 8420
+```
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/generate` | Submit a generation request (returns job ID) |
+| `GET` | `/api/status/{id}` | Poll job status (`queued` / `running` / `done` / `error`) |
+| `GET` | `/api/audio/{id}` | Download generated audio as WAV |
+| `GET` | `/api/models` | List available models and loading status |
+
+Interactive API docs are available at `http://localhost:8420/docs` when the server is running.
+
+## Max for Live Integration
+
+A Node for Max device (`m4l/mlx-audiogen.amxd`) connects Ableton Live directly to the HTTP server for generating audio from within your session:
+
+1. Start the server (see above)
+2. Load the Max for Live device onto a MIDI track
+3. Type a prompt and click Generate — the WAV is auto-saved and the path is output for drag-to-track
+
+See [`m4l/README.md`](m4l/README.md) for message reference and outlet documentation.
 
 ## Requirements
 
@@ -84,7 +146,7 @@ uv sync --extra convert   # installs torch for .bin file loading
 
 ## CLI Parameters
 
-### Generation (`mlx-audio-generate`)
+### Generation (`mlx-audiogen`)
 
 | Parameter | MusicGen | Stable Audio | Default | Description |
 |-----------|:--------:|:------------:|---------|-------------|
@@ -98,12 +160,14 @@ uv sync --extra convert   # installs torch for .bin file loading
 | `--top-k` | yes | — | 250 | Top-k sampling candidates |
 | `--guidance-coef` | yes | — | 3.0 | Classifier-free guidance scale |
 | `--melody` | yes | — | — | Audio file for melody conditioning (melody variants only) |
+| `--style-audio` | yes | — | — | Audio file for style conditioning (style variants only) |
+| `--style-coef` | yes | — | 5.0 | Dual-CFG text influence coefficient (style variants only) |
 | `--steps` | — | yes | 8 | Number of diffusion steps |
 | `--cfg-scale` | — | yes | 6.0 | CFG guidance scale |
 | `--sampler` | — | yes | euler | ODE sampler (`euler` or `rk4`) |
 | `--negative-prompt` | — | yes | "" | Negative prompt for CFG |
 
-### Conversion (`mlx-audio-convert`)
+### Conversion (`mlx-audiogen-convert`)
 
 | Parameter | Description |
 |-----------|-------------|
@@ -120,6 +184,10 @@ uv sync --extra convert   # installs torch for .bin file loading
 
 **MusicGen Melody:** `facebook/musicgen-melody`, `facebook/musicgen-melody-large`
 
+**MusicGen Stereo Melody:** `facebook/musicgen-stereo-melody`, `facebook/musicgen-stereo-melody-large`
+
+**MusicGen Style:** `facebook/musicgen-style`
+
 **Stable Audio:** `stabilityai/stable-audio-open-small`, `stabilityai/stable-audio-open-1.0`
 
 > **Note:** Some HF repos (musicgen-medium, musicgen-large) only provide `pytorch_model.bin` files instead of safetensors. The converter handles both formats automatically, but PyTorch must be installed (`uv sync --extra convert`).
@@ -129,18 +197,24 @@ uv sync --extra convert   # installs torch for .bin file loading
 ## Architecture
 
 ```
-mlx_audio_generate/
+mlx_audiogen/
 ├── shared/           # T5 encoder, EnCodec, hub utils, audio I/O
 ├── models/
 │   ├── musicgen/     # Autoregressive: T5 -> transformer -> EnCodec decode
-│   │   └── chroma.py # Chromagram extraction for melody conditioning
+│   │   ├── chroma.py # Chromagram extraction for melody conditioning
+│   │   ├── mert.py   # MERT feature extractor for style conditioning
+│   │   └── style_conditioner.py  # Style transformer + RVQ + BatchNorm
 │   └── stable_audio/ # Diffusion: T5 -> DiT (rectified flow) -> VAE decode
-└── cli/              # Unified CLI for generation and conversion
+├── server/           # FastAPI HTTP server with LRU pipeline cache
+├── cli/              # Unified CLI for generation and conversion
+m4l/                  # Max for Live Node.js HTTP client for Ableton
 ```
 
 **MusicGen**: Text -> T5 encode -> autoregressive transformer with KV cache + classifier-free guidance + codebook delay pattern -> top-k sampling -> EnCodec decode -> 32kHz WAV
 
 **MusicGen Melody**: Text -> T5 encode + chromagram from audio -> cross-attention conditioning -> same pipeline as above
+
+**MusicGen Style**: MERT extracts features from reference audio -> style transformer + RVQ -> dual-CFG with 3 forward passes per step (full, style-only, unconditional) -> same decode pipeline
 
 **Stable Audio**: Text -> T5 encode + time conditioning -> rectified flow ODE sampling through DiT -> Oobleck VAE decode -> 44.1kHz stereo WAV
 
@@ -158,14 +232,14 @@ uv run ruff format .
 uv run pytest
 
 # Type checking
-uv run mypy mlx_audio_generate/
+uv run mypy mlx_audiogen/
 
 # Security audit
-uv run bandit -r mlx_audio_generate/ -c pyproject.toml
+uv run bandit -r mlx_audiogen/ -c pyproject.toml
 uv run pip-audit
 
 # Import smoke test (no weights needed)
-uv run python -c "from mlx_audio_generate.models.musicgen import MusicGenPipeline; print('OK')"
+uv run python -c "from mlx_audiogen.models.musicgen import MusicGenPipeline; print('OK')"
 ```
 
 ## License
@@ -174,7 +248,7 @@ Apache 2.0 — see [LICENSE](LICENSE).
 
 ## Links
 
-- [GitHub](https://github.com/jasonvassallo/mlx-audio-generate)
-- [HuggingFace](https://huggingface.co/jasonvassallo/mlx-audio-generate)
+- [GitHub](https://github.com/jasonvassallo/mlx-audiogen)
+- [HuggingFace](https://huggingface.co/jasonvassallo/mlx-audiogen)
 - [MusicGen paper](https://arxiv.org/abs/2306.05284)
 - [Stable Audio Open paper](https://arxiv.org/abs/2407.14358)

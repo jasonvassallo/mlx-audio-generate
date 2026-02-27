@@ -107,6 +107,20 @@ def main():
         help="Path to audio file for melody conditioning "
         "(musicgen melody variants only)",
     )
+    # MusicGen style-specific
+    parser.add_argument(
+        "--style-audio",
+        type=str,
+        default=None,
+        help="Path to audio file for style conditioning (musicgen style variants only)",
+    )
+    parser.add_argument(
+        "--style-coef",
+        type=float,
+        default=5.0,
+        help="Style dual-CFG text influence coefficient "
+        "(musicgen style variants only, default 5.0)",
+    )
     # General
     parser.add_argument(
         "--weights-dir",
@@ -154,8 +168,21 @@ def main():
             print("Error: Melody path must not contain '..'")
             sys.exit(1)
 
+    # Validate style audio path if provided
+    if args.style_audio is not None:
+        style_file = Path(args.style_audio).resolve()
+        if not style_file.is_file():
+            print(f"Error: Style audio file not found: {args.style_audio}")
+            sys.exit(1)
+        if ".." in Path(args.style_audio).parts:
+            print("Error: Style audio path must not contain '..'")
+            sys.exit(1)
+    if args.style_coef < 0:
+        print("Error: --style-coef must be non-negative")
+        sys.exit(1)
+
     if args.model == "stable_audio":
-        from mlx_audio_generate.models.stable_audio import StableAudioPipeline
+        from mlx_audiogen.models.stable_audio import StableAudioPipeline
 
         pipe = StableAudioPipeline.from_pretrained(weights_dir)
         audio = pipe.generate(
@@ -170,7 +197,7 @@ def main():
         sample_rate = 44100
         channels = 2
     elif args.model == "musicgen":
-        from mlx_audio_generate.models.musicgen import MusicGenPipeline
+        from mlx_audiogen.models.musicgen import MusicGenPipeline
 
         pipe = MusicGenPipeline.from_pretrained(weights_dir)
         audio = pipe.generate(
@@ -181,6 +208,8 @@ def main():
             guidance_coef=args.guidance_coef,
             seed=args.seed,
             melody_path=args.melody,
+            style_audio_path=args.style_audio,
+            style_coef=args.style_coef,
         )
         sample_rate = pipe.sample_rate
         channels = 1
@@ -189,7 +218,7 @@ def main():
     output_str = args.output or f"{args.model}_output.wav"
     output_path = _validate_output_path(output_str)
 
-    from mlx_audio_generate.shared.audio_io import save_wav
+    from mlx_audiogen.shared.audio_io import save_wav
 
     save_wav(str(output_path), audio, sample_rate=sample_rate, channels=channels)
     print(f"Saved audio to {output_path}")

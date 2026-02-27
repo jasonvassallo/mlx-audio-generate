@@ -28,8 +28,9 @@ converted/
 # OS
 .DS_Store
 
+# MCP / tools
+.serena/
+.claude/
+
 # uv
 uv.lock
-
-# HuggingFace clone artifacts
-mlx-audio-generate/

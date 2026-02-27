@@ -134,8 +134,17 @@ class MusicGenModel(nn.Module):
         temperature: float = 1.0,
         guidance_coef: float = 3.0,
         melody_conditioning: Optional[mx.array] = None,
+        style_conditioning: Optional[mx.array] = None,
+        style_coef: float = 5.0,
     ) -> mx.array:
         """Autoregressive generation with codebook delay pattern and CFG.
+
+        Supports three conditioning modes:
+          - **Standard**: 2-pass CFG (conditional + unconditional)
+          - **Melody**: 2-pass CFG with chroma concatenated to text tokens
+          - **Style (dual-CFG)**: 3-pass CFG (text+style, style-only, uncond)
+            using formula: uncond + cfg * (style + beta * (full - style) - uncond)
+            where cfg = guidance_coef, beta = style_coef
 
         Args:
             conditioning: T5 encoder output, shape (1, cond_len, t5_dim).
@@ -147,6 +156,11 @@ class MusicGenModel(nn.Module):
             melody_conditioning: Optional chroma features for melody variants,
                 shape (1, chroma_len, num_chroma). Will be projected via
                 audio_enc_to_dec_proj and concatenated with text conditioning.
+            style_conditioning: Optional style tokens from StyleConditioner,
+                shape (1, style_len, style_dim). Used for dual-CFG in style
+                variants. Must be pre-projected to decoder dimension.
+            style_coef: Beta coefficient for dual-CFG text influence (default 5.0).
+                Higher values make the text prompt more influential vs. style audio.
 
         Returns:
             Audio tokens of shape (1, seq_len, num_codebooks) with delay undone.
@@ -159,10 +173,28 @@ class MusicGenModel(nn.Module):
             projected_melody = self.audio_enc_to_dec_proj(melody_conditioning)
             projected_cond = mx.concatenate([projected_melody, projected_cond], axis=1)
 
-        # Duplicate for CFG: [conditional, unconditional] batch
-        cond_batch = mx.concatenate(
-            [projected_cond, mx.zeros_like(projected_cond)], axis=0
-        )
+        # Determine CFG mode
+        use_dual_cfg = style_conditioning is not None
+
+        if use_dual_cfg:
+            # Dual-CFG: 3 forward passes per step
+            # [full (text+style), style-only, unconditional]
+            # Full conditioning: concatenate style tokens + text tokens
+            full_cond = mx.concatenate([style_conditioning, projected_cond], axis=1)
+            # Style-only: style tokens + zeroed text
+            style_only_cond = mx.concatenate(
+                [style_conditioning, mx.zeros_like(projected_cond)], axis=1
+            )
+            # Unconditional: all zeros
+            uncond = mx.zeros_like(full_cond)
+            cond_batch = mx.concatenate([full_cond, style_only_cond, uncond], axis=0)
+            batch_mult = 3
+        else:
+            # Standard CFG: 2 forward passes per step
+            cond_batch = mx.concatenate(
+                [projected_cond, mx.zeros_like(projected_cond)], axis=0
+            )
+            batch_mult = 2
 
         # Initialize with BOS tokens
         audio_shape = (1, max_steps + 1, self.num_codebooks)
@@ -175,17 +207,28 @@ class MusicGenModel(nn.Module):
         ]
 
         for step in tqdm(range(max_steps), desc="Generating"):
-            # Tile current token for CFG batch (conditional + unconditional)
-            audio_input = mx.tile(audio_seq[:, step : step + 1], [2, 1, 1])
+            # Tile current token for CFG batch
+            audio_input = mx.tile(audio_seq[:, step : step + 1], [batch_mult, 1, 1])
 
             # Forward pass
             logits = self(audio_input, cond_batch, caches)
 
-            # CFG: combine conditional and unconditional logits
-            cond_logits, uncond_logits = logits[:1], logits[1:2]
-            guided_logits = (
-                uncond_logits + (cond_logits - uncond_logits) * guidance_coef
-            )
+            if use_dual_cfg:
+                # Dual-CFG: uncond + cfg * (style + beta * (full - style) - uncond)
+                full_logits = logits[:1]
+                style_logits = logits[1:2]
+                uncond_logits = logits[2:3]
+                guided_logits = uncond_logits + guidance_coef * (
+                    style_logits
+                    + style_coef * (full_logits - style_logits)
+                    - uncond_logits
+                )
+            else:
+                # Standard CFG: uncond + cfg * (cond - uncond)
+                cond_logits, uncond_logits = logits[:1], logits[1:2]
+                guided_logits = (
+                    uncond_logits + (cond_logits - uncond_logits) * guidance_coef
+                )
 
             # Sample tokens
             audio_tokens = top_k_sampling(guided_logits, top_k, temperature, axis=-2)

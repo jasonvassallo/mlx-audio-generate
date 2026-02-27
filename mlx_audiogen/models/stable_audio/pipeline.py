@@ -16,8 +16,8 @@ import mlx.core as mx
 import mlx.nn as nn
 from transformers import AutoTokenizer
 
-from mlx_audio_generate.shared.hub import load_safetensors
-from mlx_audio_generate.shared.t5 import T5Config, T5EncoderModel
+from mlx_audiogen.shared.hub import load_safetensors
+from mlx_audiogen.shared.t5 import T5Config, T5EncoderModel
 
 from .conditioners import Conditioners
 from .config import StableAudioConfig
@@ -62,7 +62,7 @@ class StableAudioPipeline:
         """
         if weights_dir is None:
             raise ValueError(
-                "weights_dir is required. Run `mlx-audio-convert "
+                "weights_dir is required. Run `mlx-audiogen-convert "
                 "--model stabilityai/stable-audio-open-small` first."
             )
 
@@ -211,7 +211,7 @@ def _load_config(weights_path: Path) -> StableAudioConfig:
     config_file = weights_path / "config.json"
     if not config_file.exists():
         raise FileNotFoundError(
-            f"config.json not found in {weights_path}. Run mlx-audio-convert first."
+            f"config.json not found in {weights_path}. Run mlx-audiogen-convert first."
         )
     with open(config_file) as f:
         data = json.load(f)

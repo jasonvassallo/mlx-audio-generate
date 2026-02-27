@@ -14,6 +14,9 @@ _KNOWN_MUSICGEN_REPOS = {
     "facebook/musicgen-stereo-large",
     "facebook/musicgen-melody",
     "facebook/musicgen-melody-large",
+    "facebook/musicgen-stereo-melody",
+    "facebook/musicgen-stereo-melody-large",
+    "facebook/musicgen-style",
 }
 _KNOWN_STABLE_AUDIO_REPOS = {
     "stabilityai/stable-audio-open-small",
@@ -100,11 +103,17 @@ def main():
             sys.exit(1)
 
     if model_type == "musicgen":
-        from mlx_audio_generate.models.musicgen.convert import convert_musicgen
+        # Style variants use audiocraft format — route to style converter
+        if "style" in args.model.lower():
+            from mlx_audiogen.models.musicgen.convert import convert_musicgen_style
 
-        convert_musicgen(args.model, output_dir, dtype=args.dtype)
+            convert_musicgen_style(args.model, output_dir, dtype=args.dtype)
+        else:
+            from mlx_audiogen.models.musicgen.convert import convert_musicgen
+
+            convert_musicgen(args.model, output_dir, dtype=args.dtype)
     elif model_type == "stable_audio":
-        from mlx_audio_generate.models.stable_audio.convert import (
+        from mlx_audiogen.models.stable_audio.convert import (
             convert_stable_audio,
         )
 

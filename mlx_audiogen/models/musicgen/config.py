@@ -113,6 +113,17 @@ class MusicGenConfig:
     num_chroma: int = 12
     chroma_length: int = 235
     is_melody: bool = False
+    is_style: bool = False
+
+    # Style conditioner configuration (only used when is_style=True)
+    style_dim: int = 512
+    style_num_heads: int = 8
+    style_num_layers: int = 8
+    style_ffn_dim: int = 2048
+    style_ds_factor: int = 15
+    style_n_q: int = 3
+    style_bins: int = 1024
+    style_excerpt_length: float = 3.0
 
     @classmethod
     def from_dict(cls, d: dict) -> "MusicGenConfig":
@@ -124,6 +135,9 @@ class MusicGenConfig:
         model_type = d.get("model_type", "")
         is_melody = "melody" in model_type or d.get("is_melody", False)
 
+        # Detect style variant from model_type or explicit flag
+        is_style = "style" in model_type or d.get("is_style", False)
+
         return cls(
             decoder=decoder,
             audio_encoder=audio_encoder,
@@ -131,4 +145,13 @@ class MusicGenConfig:
             num_chroma=d.get("num_chroma", 12),
             chroma_length=d.get("chroma_length", 235),
             is_melody=is_melody,
+            is_style=is_style,
+            style_dim=d.get("style_dim", 512),
+            style_num_heads=d.get("style_num_heads", 8),
+            style_num_layers=d.get("style_num_layers", 8),
+            style_ffn_dim=d.get("style_ffn_dim", 2048),
+            style_ds_factor=d.get("style_ds_factor", 15),
+            style_n_q=d.get("style_n_q", 3),
+            style_bins=d.get("style_bins", 1024),
+            style_excerpt_length=d.get("style_excerpt_length", 3.0),
         )
