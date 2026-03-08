@@ -79,11 +79,34 @@ class KVCache:
         return self.keys, self.values
 
 
+class CrossAttentionKVCache:
+    """Cache for cross-attention K/V computed from static conditioning.
+
+    Unlike self-attention KV cache which grows per step, cross-attention
+    K/V are computed once from the T5 conditioning output (which is static
+    during generation) and reused for all subsequent steps. This avoids
+    redundant K/V projection computations: for a 24-layer model with 250
+    generation steps, this saves 24 × 249 = 5,976 matrix multiplications.
+    """
+
+    def __init__(self):
+        self.keys: Optional[mx.array] = None
+        self.values: Optional[mx.array] = None
+
+    @property
+    def is_populated(self) -> bool:
+        return self.keys is not None
+
+
 class MultiHeadAttention(nn.Module):
     """Multi-head attention with separate Q/K/V projections.
 
     Uses ``mx.fast.scaled_dot_product_attention`` for Metal-optimized computation.
     Attention projections have no bias (matching MusicGen's architecture).
+
+    Supports an optional ``cross_kv_cache`` for cross-attention: when provided,
+    K/V are computed and cached on the first call, then reused on all subsequent
+    calls (since the conditioning tensor is static during generation).
     """
 
     def __init__(self, dim: int, n_heads: int):
@@ -103,20 +126,26 @@ class MultiHeadAttention(nn.Module):
         values: mx.array,
         mask: Optional[mx.array] = None,
         cache: Optional[KVCache] = None,
+        cross_kv_cache: Optional[CrossAttentionKVCache] = None,
     ) -> mx.array:
         B, L_q, _ = queries.shape
-        L_k = keys.shape[1]
 
-        queries, keys, values = (
-            self.q_proj(queries),
-            self.k_proj(keys),
-            self.v_proj(values),
-        )
-
-        # Reshape to (B, n_heads, seq_len, head_dim) for SDPA
+        queries = self.q_proj(queries)
         queries = queries.reshape(B, L_q, self.n_heads, -1).transpose(0, 2, 1, 3)
-        keys = keys.reshape(B, L_k, self.n_heads, -1).transpose(0, 2, 1, 3)
-        values = values.reshape(B, L_k, self.n_heads, -1).transpose(0, 2, 1, 3)
+
+        # Cross-attention K/V caching: reuse pre-computed K/V if available
+        if cross_kv_cache is not None and cross_kv_cache.is_populated:
+            keys = cross_kv_cache.keys
+            values = cross_kv_cache.values
+        else:
+            L_k = keys.shape[1]
+            keys = self.k_proj(keys)
+            values = self.v_proj(values)
+            keys = keys.reshape(B, L_k, self.n_heads, -1).transpose(0, 2, 1, 3)
+            values = values.reshape(B, L_k, self.n_heads, -1).transpose(0, 2, 1, 3)
+            if cross_kv_cache is not None:
+                cross_kv_cache.keys = keys
+                cross_kv_cache.values = values
 
         if cache is not None:
             keys, values = cache.update_and_fetch(keys, values)
@@ -159,6 +188,7 @@ class TransformerBlock(nn.Module):
         conditioning: mx.array,
         mask: Optional[mx.array] = None,
         cache: Optional[KVCache] = None,
+        cross_kv_cache: Optional[CrossAttentionKVCache] = None,
     ) -> mx.array:
         # Self-attention with pre-norm
         xn = self.self_attn_layer_norm(x)
@@ -166,7 +196,9 @@ class TransformerBlock(nn.Module):
 
         # Cross-attention with pre-norm (no mask — attend to all conditioning tokens)
         xn = self.encoder_attn_layer_norm(x)
-        x = x + self.encoder_attn(xn, conditioning, conditioning)
+        x = x + self.encoder_attn(
+            xn, conditioning, conditioning, cross_kv_cache=cross_kv_cache
+        )
 
         # FFN with pre-norm + GELU
         xn = self.final_layer_norm(x)

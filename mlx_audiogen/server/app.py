@@ -224,6 +224,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# Static Files (Web UI)
+# ---------------------------------------------------------------------------
+
+# Serve the built React SPA from web/dist/ if it exists.
+# This is mounted AFTER the API routes so /api/* takes priority.
+_WEB_DIST = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -360,8 +368,8 @@ def _get_pipeline(model_type: str) -> object:
     registered weights dir containing the model type name is used.
     """
     # Find weights dir
-    weights_dir = None
-    cache_key = None
+    weights_dir: str | None = None
+    cache_key: str = ""
     for name, path in _weights_dirs.items():
         if model_type in name.lower():
             weights_dir = path
@@ -420,7 +428,7 @@ def _generate_musicgen(
     channels = 1
     if pipe.config.decoder.num_codebooks > 4:
         channels = 2
-    return audio, pipe.sample_rate, channels
+    return audio, pipe.sample_rate, channels  # type: ignore[return-value]
 
 
 def _generate_stable_audio(
@@ -439,7 +447,7 @@ def _generate_stable_audio(
         seed=req.seed,
         sampler=req.sampler,
     )
-    return audio, 44100, 2
+    return audio, 44100, 2  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +508,34 @@ def _cleanup_old_jobs() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Web UI Static Files
+# ---------------------------------------------------------------------------
+
+if _WEB_DIST.is_dir():
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    @app.get("/{full_path:path}")
+    def spa_catch_all(full_path: str) -> Response:
+        """Serve static files or fall back to index.html for SPA routing."""
+        file_path = _WEB_DIST / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(file_path)
+        index = _WEB_DIST / "index.html"
+        if index.is_file():
+            return FileResponse(index)
+        raise HTTPException(404, "Web UI not built. Run: cd web && npm run build")
+
+    # Mount static assets directory for Vite's hashed files
+    if (_WEB_DIST / "assets").is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(_WEB_DIST / "assets")),
+            name="static-assets",
+        )
+
+
+# ---------------------------------------------------------------------------
 # CLI Entry Point
 # ---------------------------------------------------------------------------
 
@@ -532,6 +568,11 @@ def main():
         type=int,
         default=2,
         help="Max pipelines to keep in memory (default: 2)",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open Web UI in browser after server starts",
     )
 
     args = parser.parse_args()
@@ -571,8 +612,18 @@ def main():
         except Exception as e:
             print(f"Warning: Failed to pre-load {first_name}: {e}")
 
+    url = f"http://{args.host}:{args.port}"
     print(f"\nStarting server on {args.host}:{args.port}")
-    print(f"API docs: http://{args.host}:{args.port}/docs")
+    print(f"API docs: {url}/docs")
+    if _WEB_DIST.is_dir():
+        print(f"Web UI:   {url}/")
+
+    if args.open and _WEB_DIST.is_dir():
+        import threading
+        import webbrowser
+
+        # Open browser after a short delay to let uvicorn start
+        threading.Timer(1.5, webbrowser.open, args=(url,)).start()
 
     import uvicorn
 

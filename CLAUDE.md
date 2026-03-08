@@ -51,6 +51,15 @@ uv run mlx-audiogen-server \
   --weights-dir ./converted/stable-audio \
   --port 8420
 
+# Start server and open Web UI in browser
+uv run mlx-audiogen-server --weights-dir ./converted/musicgen-small --open
+
+# Web UI development (hot reload, proxies API to :8420)
+cd web && npm install && npm run dev   # → http://localhost:3000
+
+# Build Web UI for production (served by FastAPI at http://localhost:8420/)
+cd web && npm run build
+
 # Quick import smoke test (no weights needed)
 uv run python -c "from mlx_audiogen.models.musicgen import MusicGenPipeline; print('OK')"
 ```
@@ -76,10 +85,18 @@ mlx_audiogen/
 │   └── stable_audio/ # Diffusion: T5 -> DiT (rectified flow) -> VAE decode
 │       ├── config.py, dit.py, vae.py, conditioners.py, sampling.py, pipeline.py, convert.py
 ├── server/
-│   └── app.py        # FastAPI HTTP server with LRU pipeline cache + async jobs
+│   └── app.py        # FastAPI HTTP server with LRU pipeline cache + async jobs + static SPA serving
 ├── cli/
 │   ├── generate.py   # Unified CLI: --model {musicgen,stable_audio}
 │   └── convert.py    # Unified conversion: auto-detects model type from repo ID
+web/                    # React + Vite + TypeScript SPA (dark/pro audio UI)
+├── src/
+│   ├── api/client.ts   # Typed fetch wrappers for all API endpoints
+│   ├── store/useStore.ts  # Zustand state: models, params, jobs, history
+│   ├── components/     # ModelSelector, PromptInput, ParameterPanel, AudioPlayer, etc.
+│   └── types/api.ts    # TypeScript types mirroring server Pydantic models
+├── package.json        # Volta-pinned Node 22 + npm 10
+└── vite.config.ts      # Dev proxy to :8420, Tailwind CSS v4
 m4l/
 └── mlx-audiogen.js   # Node for Max HTTP client for Ableton Live integration
 ```
@@ -115,6 +132,20 @@ m4l/
 | `GET` | `/api/models` | List available models and loading status |
 
 Interactive API docs at `http://localhost:8420/docs` when running.
+
+## Web UI
+
+`web/` is a React + Vite + TypeScript SPA with a dark/pro audio aesthetic (DAW-inspired). It communicates with the FastAPI server via the same REST API used by the Max for Live client.
+
+- **Tech stack**: React 19, TypeScript, Vite 6, Tailwind CSS v4, Zustand 5
+- **Node management**: Volta pins Node 22 and npm 10 in `web/package.json`
+- **Dev mode**: `npm run dev` starts Vite on :3000, proxies `/api/*` to FastAPI on :8420
+- **Production**: `npm run build` outputs to `web/dist/`, served by FastAPI's static file mount
+- **Components**: ModelSelector, PromptInput, ParameterPanel (model-aware sliders), GenerateButton (with progress bar), AudioPlayer (Web Audio API waveform + `setSinkId` device selection), HistoryPanel, AudioDeviceSelector
+- **State**: Zustand store manages models, generation parameters, active job polling, and history
+- **API client**: Typed fetch wrappers in `src/api/client.ts` matching server Pydantic models
+- **Audio output**: Web Audio API plays through system default; AudioDeviceSelector allows choosing a specific output device via `setSinkId()`
+- **Launch**: `uv run mlx-audiogen-server --weights-dir <path> --open` starts server and opens browser
 
 ## Max for Live Integration
 

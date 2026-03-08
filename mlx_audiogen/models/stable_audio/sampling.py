@@ -57,6 +57,16 @@ def _force_compute(x: mx.array) -> None:
     _FORCE_COMPUTE_FN(x)
 
 
+@mx.compile
+def _apply_cfg(v_cond: mx.array, v_uncond: mx.array, cfg_scale: float) -> mx.array:
+    """Fused classifier-free guidance interpolation.
+
+    Compiled to a single Metal kernel to avoid intermediate tensor
+    allocations for the subtract → multiply → add chain.
+    """
+    return v_uncond + cfg_scale * (v_cond - v_uncond)
+
+
 def _get_velocity(
     model_fn: ModelFn,
     latents: mx.array,
@@ -77,7 +87,7 @@ def _get_velocity(
 
         v_batch = model_fn(latents_batch, t_batch, cond_batch, global_batch)
         v_cond, v_uncond = mx.split(v_batch, 2, axis=0)
-        return v_uncond + cfg_scale * (v_cond - v_uncond)
+        return _apply_cfg(v_cond, v_uncond, cfg_scale)
 
     return model_fn(latents, t_in, cond_tokens, global_cond)
 

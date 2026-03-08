@@ -22,11 +22,41 @@ import mlx.nn as nn
 from tqdm import tqdm
 
 from .config import MusicGenConfig
-from .transformer import KVCache, TransformerBlock, create_sin_embedding, top_k_sampling
+from .transformer import (
+    CrossAttentionKVCache,
+    KVCache,
+    TransformerBlock,
+    create_sin_embedding,
+    top_k_sampling,
+)
 
 # Force-compute helper: triggers MLX graph materialisation without using
 # the bare function name that the project's security hook pattern-matches on.
 _FORCE_COMPUTE = getattr(mx, "ev" + "al")
+
+
+@mx.compile
+def _apply_standard_cfg(
+    cond_logits: mx.array,
+    uncond_logits: mx.array,
+    guidance_coef: float,
+) -> mx.array:
+    """Fused standard CFG: uncond + coef * (cond - uncond)."""
+    return uncond_logits + (cond_logits - uncond_logits) * guidance_coef
+
+
+@mx.compile
+def _apply_dual_cfg(
+    full_logits: mx.array,
+    style_logits: mx.array,
+    uncond_logits: mx.array,
+    guidance_coef: float,
+    style_coef: float,
+) -> mx.array:
+    """Fused dual-CFG: uncond + cfg * (style + beta * (full - style) - uncond)."""
+    return uncond_logits + guidance_coef * (
+        style_logits + style_coef * (full_logits - style_logits) - uncond_logits
+    )
 
 
 class MusicGenModel(nn.Module):
@@ -88,6 +118,7 @@ class MusicGenModel(nn.Module):
         audio_tokens: mx.array,
         conditioning: mx.array,
         cache: Optional[list[KVCache]] = None,
+        cross_kv_caches: Optional[list[CrossAttentionKVCache]] = None,
     ) -> mx.array:
         """Forward pass: tokens -> embeddings -> transformer -> logits.
 
@@ -95,12 +126,19 @@ class MusicGenModel(nn.Module):
             audio_tokens: Shape (B, seq_len, num_codebooks), token indices.
             conditioning: Shape (B, cond_len, hidden_size), already projected.
             cache: List of KVCache objects (one per layer), or None.
+            cross_kv_caches: List of CrossAttentionKVCache objects (one per layer).
+                On step 0, K/V are computed from conditioning and cached.
+                On subsequent steps, cached K/V are reused (conditioning is static).
 
         Returns:
             Logits of shape (B, seq_len, codebook_size, num_codebooks).
         """
         if cache is None:
             cache: list[Optional[KVCache]] = [None] * len(self.layers)  # type: ignore[no-redef]
+        if cross_kv_caches is None:
+            cross_kv_caches: list[Optional[CrossAttentionKVCache]] = [  # type: ignore[no-redef]
+                None
+            ] * len(self.layers)
 
         # Sum embeddings from all codebooks (each codebook embeds independently)
         x = sum(
@@ -115,8 +153,8 @@ class MusicGenModel(nn.Module):
         x = x + pos_emb.astype(x.dtype)
 
         # Run through transformer layers
-        for layer, c in zip(self.layers, cache):  # type: ignore[arg-type]
-            x = layer(x, conditioning, cache=c)
+        for layer, c, xc in zip(self.layers, cache, cross_kv_caches):  # type: ignore[arg-type]
+            x = layer(x, conditioning, cache=c, cross_kv_cache=xc)
 
         # Final norm + per-codebook logits
         x = self.layer_norm(x)
@@ -200,34 +238,38 @@ class MusicGenModel(nn.Module):
         audio_shape = (1, max_steps + 1, self.num_codebooks)
         audio_seq = mx.full(audio_shape, self.bos_token_id)
 
-        # Create KV caches for all layers
+        # Create KV caches for all layers, pre-allocated for full generation
+        # to avoid reallocation + copy overhead during the loop
         head_dim = self.hidden_size // self.num_attention_heads
         caches = [
-            KVCache(head_dim, self.num_attention_heads) for _ in range(len(self.layers))
+            KVCache(head_dim, self.num_attention_heads, step=max_steps + 1)
+            for _ in range(len(self.layers))
         ]
+
+        # Cross-attention KV caches: K/V from static conditioning are computed
+        # once on step 0 and reused for all subsequent steps
+        cross_kv_caches = [CrossAttentionKVCache() for _ in range(len(self.layers))]
 
         for step in tqdm(range(max_steps), desc="Generating"):
             # Tile current token for CFG batch
             audio_input = mx.tile(audio_seq[:, step : step + 1], [batch_mult, 1, 1])
 
             # Forward pass
-            logits = self(audio_input, cond_batch, caches)
+            logits = self(audio_input, cond_batch, caches, cross_kv_caches)
 
             if use_dual_cfg:
                 # Dual-CFG: uncond + cfg * (style + beta * (full - style) - uncond)
-                full_logits = logits[:1]
-                style_logits = logits[1:2]
-                uncond_logits = logits[2:3]
-                guided_logits = uncond_logits + guidance_coef * (
-                    style_logits
-                    + style_coef * (full_logits - style_logits)
-                    - uncond_logits
+                guided_logits = _apply_dual_cfg(
+                    logits[:1],
+                    logits[1:2],
+                    logits[2:3],
+                    guidance_coef,
+                    style_coef,
                 )
             else:
                 # Standard CFG: uncond + cfg * (cond - uncond)
-                cond_logits, uncond_logits = logits[:1], logits[1:2]
-                guided_logits = (
-                    uncond_logits + (cond_logits - uncond_logits) * guidance_coef
+                guided_logits = _apply_standard_cfg(
+                    logits[:1], logits[1:2], guidance_coef
                 )
 
             # Sample tokens

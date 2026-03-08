@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* DAW-inspired dark theme */
+@theme {
+  --color-surface-0: #0a0a0a;
+  --color-surface-1: #111111;
+  --color-surface-2: #1a1a1a;
+  --color-surface-3: #222222;
+  --color-border: #2a2a2a;
+  --color-border-light: #333333;
+  --color-text-primary: #e8e8e8;
+  --color-text-secondary: #888888;
+  --color-text-muted: #555555;
+  --color-accent: #ff6b35;
+  --color-accent-hover: #ff8555;
+  --color-accent-dim: #ff6b3520;
+  --color-success: #4ade80;
+  --color-error: #f87171;
+  --color-warning: #fbbf24;
+  --color-info: #60a5fa;
+  --font-family-mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace,
+    monospace;
+}
+
+html {
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface-1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-light);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Range slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 20px;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--color-border-light);
+  border-radius: 2px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  margin-top: -5px;
+  border: 2px solid var(--color-surface-1);
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  background: var(--color-accent-hover);
+}

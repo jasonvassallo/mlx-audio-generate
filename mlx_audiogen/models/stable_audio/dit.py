@@ -136,9 +136,7 @@ class SelfAttention(nn.Module):
             q = apply_rotary_pos_emb(q, rotary_freqs)
             k = apply_rotary_pos_emb(k, rotary_freqs)
 
-        dots = (q @ k.transpose(0, 1, 3, 2)) * self.scale
-        attn = mx.softmax(dots, axis=-1)
-        out = attn @ v
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
 
         out = out.transpose(0, 2, 1, 3).reshape(B, L, D)
         return self.to_out(out)
@@ -184,9 +182,7 @@ class CrossAttention(nn.Module):
             k = mx.repeat(k, repeats, axis=1)
             v = mx.repeat(v, repeats, axis=1)
 
-        dots = (q @ k.transpose(0, 1, 3, 2)) * self.scale
-        attn = mx.softmax(dots, axis=-1)
-        out = attn @ v
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
 
         out = out.transpose(0, 2, 1, 3).reshape(B, L, D)
         return self.to_out(out)
