@@ -7,15 +7,20 @@ import ParameterPanel from "./components/ParameterPanel";
 import GenerateButton from "./components/GenerateButton";
 import HistoryPanel from "./components/HistoryPanel";
 import AudioDeviceSelector from "./components/AudioDeviceSelector";
+import SettingsPanel from "./components/SettingsPanel";
 
 export default function App() {
   const loadModels = useStore((s) => s.loadModels);
+  const loadHistory = useStore((s) => s.loadHistory);
+  const loadSettings = useStore((s) => s.loadSettings);
   const modelsLoading = useStore((s) => s.modelsLoading);
   const modelsError = useStore((s) => s.modelsError);
 
   useEffect(() => {
     loadModels();
-  }, [loadModels]);
+    loadHistory();
+    loadSettings();
+  }, [loadModels, loadHistory, loadSettings]);
 
   return (
     <div className="flex h-screen flex-col bg-surface-0">
@@ -38,8 +43,9 @@ export default function App() {
           <ParameterPanel />
           <GenerateButton />
 
-          {/* Bottom section: audio output device */}
-          <div className="mt-auto pt-4 border-t border-border">
+          {/* Bottom section: settings + audio output */}
+          <div className="mt-auto space-y-4 pt-4 border-t border-border">
+            <SettingsPanel />
             <AudioDeviceSelector />
           </div>
         </div>

@@ -6,11 +6,26 @@ import {
   fetchJobStatus,
   getAudioUrl,
 } from "../api/client";
+import {
+  saveEntry,
+  loadAllEntries,
+  deleteEntry,
+  updateFavorite,
+  clearAllEntries,
+  purgeExpiredEntries,
+  loadSettings,
+  saveSettings,
+  type PersistedEntry,
+  type HistorySettings,
+} from "./historyDb";
 
-/** A completed generation with its audio URL. */
+/** A generation entry with a local blob URL for playback. */
 export interface HistoryEntry {
+  id: string;
   job: JobInfo;
-  audioUrl: string;
+  audioUrl: string; // blob: URL for local playback
+  favorite: boolean;
+  createdAt: number;
 }
 
 interface AppState {
@@ -33,9 +48,19 @@ interface AppState {
   generateError: string | null;
   generate: () => Promise<void>;
 
-  // --- History ---
+  // --- History (IndexedDB-backed) ---
   history: HistoryEntry[];
-  clearHistory: () => void;
+  historyLoaded: boolean;
+  loadHistory: () => Promise<void>;
+  toggleFavorite: (id: string) => Promise<void>;
+  deleteHistoryEntry: (id: string) => Promise<void>;
+  clearHistory: () => Promise<void>;
+
+  // --- Settings ---
+  settings: HistorySettings;
+  settingsLoaded: boolean;
+  loadSettings: () => Promise<void>;
+  updateSettings: (settings: Partial<HistorySettings>) => Promise<void>;
 }
 
 const DEFAULT_PARAMS: GenerateRequest = {
@@ -56,6 +81,17 @@ const DEFAULT_PARAMS: GenerateRequest = {
 
 const POLL_INTERVAL = 500;
 
+/** Convert a PersistedEntry (with Blob) to a HistoryEntry (with blob URL). */
+function toHistoryEntry(entry: PersistedEntry): HistoryEntry {
+  return {
+    id: entry.id,
+    job: entry.job,
+    audioUrl: URL.createObjectURL(entry.audioBlob),
+    favorite: entry.favorite,
+    createdAt: entry.createdAt,
+  };
+}
+
 export const useStore = create<AppState>((set, get) => ({
   // --- Models ---
   models: [],
@@ -66,7 +102,6 @@ export const useStore = create<AppState>((set, get) => ({
     try {
       const models = await fetchModels();
       set({ models, modelsLoading: false });
-      // Auto-select first model if none selected
       if (models.length > 0 && !get().params.model) {
         set((s) => ({
           params: { ...s.params, model: models[0]!.model_type },
@@ -100,7 +135,6 @@ export const useStore = create<AppState>((set, get) => ({
     set({ isGenerating: true, generateError: null, activeJob: null });
 
     try {
-      // Submit generation request
       const { id } = await submitGeneration(params);
 
       // Poll until done
@@ -117,14 +151,43 @@ export const useStore = create<AppState>((set, get) => ({
       const finalJob = await poll();
 
       if (finalJob.status === "done") {
-        // Add to history
+        // Eagerly download the audio blob before server cleans it up (5 min)
+        const audioRes = await fetch(getAudioUrl(finalJob.id));
+        const audioBlob = await audioRes.blob();
+        const now = Date.now();
+
+        // Persist to IndexedDB
+        const persisted: PersistedEntry = {
+          id: finalJob.id,
+          job: finalJob,
+          audioBlob,
+          favorite: false,
+          createdAt: now,
+        };
+        await saveEntry(persisted);
+
+        // Add to in-memory history
+        const entry: HistoryEntry = {
+          id: finalJob.id,
+          job: finalJob,
+          audioUrl: URL.createObjectURL(audioBlob),
+          favorite: false,
+          createdAt: now,
+        };
         set((s) => ({
-          history: [
-            { job: finalJob, audioUrl: getAudioUrl(finalJob.id) },
-            ...s.history,
-          ],
+          history: [entry, ...s.history],
           isGenerating: false,
         }));
+
+        // Run auto-purge if retention is configured
+        const { settings } = get();
+        if (settings.retentionHours > 0) {
+          const deleted = await purgeExpiredEntries(settings.retentionHours);
+          if (deleted > 0) {
+            // Reload history to reflect purged entries
+            await get().loadHistory();
+          }
+        }
       } else {
         set({
           generateError: finalJob.error ?? "Generation failed",
@@ -139,7 +202,74 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  // --- History ---
+  // --- History (IndexedDB-backed) ---
   history: [],
-  clearHistory: () => set({ history: [] }),
+  historyLoaded: false,
+  loadHistory: async () => {
+    try {
+      const entries = await loadAllEntries();
+      const historyEntries = entries.map(toHistoryEntry);
+      set({ history: historyEntries, historyLoaded: true });
+    } catch (e) {
+      console.error("Failed to load history:", e);
+      set({ historyLoaded: true });
+    }
+  },
+
+  toggleFavorite: async (id: string) => {
+    const entry = get().history.find((h) => h.id === id);
+    if (!entry) return;
+    const newFav = !entry.favorite;
+    await updateFavorite(id, newFav);
+    set((s) => ({
+      history: s.history.map((h) =>
+        h.id === id ? { ...h, favorite: newFav } : h,
+      ),
+    }));
+  },
+
+  deleteHistoryEntry: async (id: string) => {
+    // Revoke blob URL to free memory
+    const entry = get().history.find((h) => h.id === id);
+    if (entry) URL.revokeObjectURL(entry.audioUrl);
+
+    await deleteEntry(id);
+    set((s) => ({
+      history: s.history.filter((h) => h.id !== id),
+    }));
+  },
+
+  clearHistory: async () => {
+    // Revoke all blob URLs
+    get().history.forEach((h) => URL.revokeObjectURL(h.audioUrl));
+    await clearAllEntries();
+    set({ history: [] });
+  },
+
+  // --- Settings ---
+  settings: { retentionHours: 0 },
+  settingsLoaded: false,
+  loadSettings: async () => {
+    try {
+      const settings = await loadSettings();
+      set({ settings, settingsLoaded: true });
+    } catch (e) {
+      console.error("Failed to load settings:", e);
+      set({ settingsLoaded: true });
+    }
+  },
+
+  updateSettings: async (partial) => {
+    const newSettings = { ...get().settings, ...partial };
+    await saveSettings(newSettings);
+    set({ settings: newSettings });
+
+    // If retention was just enabled, run a purge now
+    if (partial.retentionHours && partial.retentionHours > 0) {
+      const deleted = await purgeExpiredEntries(partial.retentionHours);
+      if (deleted > 0) {
+        await get().loadHistory();
+      }
+    }
+  },
 }));
