@@ -6,6 +6,9 @@ Designed for integration with Max for Live and other HTTP clients.
 Usage:
     mlx-audiogen-server --weights-dir ./converted/musicgen-small --port 8420
 
+    # Or launch with all available models:
+    mlx-audiogen-app
+
     # Or with uvicorn directly:
     uvicorn mlx_audiogen.server:app --port 8420
 
@@ -13,6 +16,6 @@ Install server dependencies:
     uv sync --extra server
 """
 
-from .app import app, main
+from .app import app, launch_app, main
 
-__all__ = ["app", "main"]
+__all__ = ["app", "launch_app", "main"]

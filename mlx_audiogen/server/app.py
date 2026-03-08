@@ -665,5 +665,111 @@ def main():
     uvicorn.run(app, host=args.host, port=args.port)
 
 
+def launch_app():
+    """One-command launcher: auto-discovers all converted models and opens the Web UI.
+
+    Usage:
+        mlx-audiogen-app
+        mlx-audiogen-app --port 8420 --max-cache 3
+    """
+    parser = argparse.ArgumentParser(
+        description="Launch MLX AudioGen with all available models"
+    )
+    parser.add_argument(
+        "--converted-dir",
+        type=str,
+        default=None,
+        help="Directory containing converted model folders (default: ./converted)",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8420, help="Server port (default: 8420)"
+    )
+    parser.add_argument(
+        "--host", type=str, default="127.0.0.1", help="Server host (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--max-cache",
+        type=int,
+        default=3,
+        help="Max pipelines to keep in memory (default: 3)",
+    )
+
+    args = parser.parse_args()
+
+    # Auto-discover converted model directories
+    converted_root = Path(args.converted_dir) if args.converted_dir else None
+
+    # Search common locations
+    search_paths = []
+    if converted_root:
+        search_paths.append(converted_root.resolve())
+    else:
+        # Try relative to CWD, then relative to package
+        search_paths.append(Path.cwd() / "converted")
+        search_paths.append(Path(__file__).resolve().parent.parent.parent / "converted")
+
+    found_models = []
+    for root in search_paths:
+        if root.is_dir():
+            for child in sorted(root.iterdir()):
+                if child.is_dir() and child.name not in (".", ".."):
+                    # Quick check: does it look like a model dir?
+                    has_config = (child / "config.json").exists()
+                    has_weights = any(child.glob("*.safetensors"))
+                    if has_config or has_weights:
+                        found_models.append(child)
+            if found_models:
+                break
+
+    if not found_models:
+        print("No converted models found.")
+        print("Expected location: ./converted/")
+        print("Run mlx-audiogen-convert first, or pass --converted-dir")
+        sys.exit(1)
+
+    # Register all found models
+    print(f"Found {len(found_models)} model(s):")
+    for model_path in found_models:
+        name = model_path.name
+        _weights_dirs[name] = str(model_path)
+        print(f"  {name}")
+
+    # Configure cache
+    global _pipeline_cache
+    _pipeline_cache = PipelineCache(max_size=args.max_cache)
+
+    # Pre-load first model
+    first_name, first_path = next(iter(_weights_dirs.items()))
+    print(f"\nPre-loading {first_name}...")
+    try:
+        if "stable" in first_name.lower():
+            from mlx_audiogen.models.stable_audio import StableAudioPipeline
+
+            pipe = StableAudioPipeline.from_pretrained(first_path)
+        else:
+            from mlx_audiogen.models.musicgen import MusicGenPipeline
+
+            pipe = MusicGenPipeline.from_pretrained(first_path)
+        _pipeline_cache.put(first_name, pipe)
+    except Exception as e:
+        print(f"Warning: Failed to pre-load {first_name}: {e}")
+
+    url = f"http://{args.host}:{args.port}"
+    print(f"\nStarting server on {args.host}:{args.port}")
+    print(f"API docs: {url}/docs")
+    if _WEB_DIST.is_dir():
+        print(f"Web UI:   {url}/")
+
+    import threading
+    import webbrowser
+
+    if _WEB_DIST.is_dir():
+        threading.Timer(1.5, webbrowser.open, args=(url,)).start()
+
+    import uvicorn
+
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
 if __name__ == "__main__":
     main()

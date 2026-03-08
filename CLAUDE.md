@@ -51,7 +51,10 @@ uv run mlx-audiogen-server \
   --weights-dir ./converted/stable-audio \
   --port 8420
 
-# Start server and open Web UI in browser
+# Launch app with all available models (auto-discovers ./converted/*)
+uv run mlx-audiogen-app
+
+# Or start server with specific models
 uv run mlx-audiogen-server --weights-dir ./converted/musicgen-small --open
 
 # Web UI development (hot reload, proxies API to :8420)
