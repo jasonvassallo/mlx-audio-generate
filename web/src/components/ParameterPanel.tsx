@@ -1,5 +1,6 @@
 import { useStore } from "../store/useStore";
 import ParamSlider from "./ParamSlider";
+import DurationControl from "./DurationControl";
 
 export default function ParameterPanel() {
   const params = useStore((s) => s.params);
@@ -12,17 +13,8 @@ export default function ParameterPanel() {
         Parameters
       </h3>
 
-      {/* Duration — shared by both models */}
-      <ParamSlider
-        label="Duration"
-        value={params.seconds}
-        onChange={(v) => setParam("seconds", v)}
-        min={0.5}
-        max={60}
-        step={0.5}
-        unit="s"
-        disabled={isGenerating}
-      />
+      {/* Duration — supports both seconds and BPM-based bars */}
+      <DurationControl />
 
       {/* Seed control */}
       <div className="space-y-1">

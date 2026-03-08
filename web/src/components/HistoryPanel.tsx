@@ -146,6 +146,8 @@ export default function HistoryPanel() {
               src={entry.audioUrl}
               title={`${entry.job.model}_${entry.id}`}
               autoPlay={i === 0 && !entry.favorite}
+              entryId={entry.id}
+              sourceBpm={entry.sourceBpm}
             />
           </div>
         ))}

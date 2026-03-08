@@ -27,15 +27,23 @@ export interface PersistedEntry {
   audioBlob: Blob;
   favorite: boolean;
   createdAt: number; // Unix timestamp (ms)
+  /** Estimated source BPM (user-editable per entry). 0 = unknown. */
+  sourceBpm: number;
 }
 
 export interface HistorySettings {
   /** Auto-delete entries older than this many hours. 0 = never. */
   retentionHours: number;
+  /** Master/target BPM for loop playback. 0 = no tempo adjustment. */
+  masterBpm: number;
+  /** true = time-stretch (pitch stays), false = vinyl (pitch follows tempo). */
+  preservePitch: boolean;
 }
 
 const DEFAULT_SETTINGS: HistorySettings = {
   retentionHours: 0, // Keep forever by default
+  masterBpm: 120,
+  preservePitch: true,
 };
 
 function openDb(): Promise<IDBDatabase> {
@@ -108,6 +116,27 @@ export async function updateFavorite(
       const entry = getReq.result as PersistedEntry | undefined;
       if (entry) {
         entry.favorite = favorite;
+        store.put(entry);
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function updateSourceBpm(
+  id: string,
+  sourceBpm: number,
+): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORE, "readwrite");
+    const store = tx.objectStore(HISTORY_STORE);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const entry = getReq.result as PersistedEntry | undefined;
+      if (entry) {
+        entry.sourceBpm = sourceBpm;
         store.put(entry);
       }
     };

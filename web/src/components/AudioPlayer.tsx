@@ -1,16 +1,21 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { getGlobalSinkId, onSinkIdChange } from "./AudioDeviceSelector";
+import { useStore } from "../store/useStore";
 
 interface AudioPlayerProps {
   src: string;
   title: string;
   autoPlay?: boolean;
+  entryId: string;
+  sourceBpm: number;
 }
 
 export default function AudioPlayer({
   src,
   title,
   autoPlay = false,
+  entryId,
+  sourceBpm,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -19,28 +24,56 @@ export default function AudioPlayer({
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLooping, setIsLooping] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  const settings = useStore((s) => s.settings);
+  const setSourceBpm = useStore((s) => s.setSourceBpm);
+
+  // Calculate playback rate from BPM ratio
+  const playbackRate =
+    sourceBpm > 0 && settings.masterBpm > 0
+      ? settings.masterBpm / sourceBpm
+      : 1.0;
+
+  // Apply playback rate and preservesPitch whenever they change
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.playbackRate = playbackRate;
+    // preservesPitch may be prefixed in some browsers
+    type PitchAudio = HTMLAudioElement & {
+      preservesPitch?: boolean;
+      webkitPreservesPitch?: boolean;
+    };
+    const el = audio as PitchAudio;
+    if (typeof el.preservesPitch !== "undefined") {
+      el.preservesPitch = settings.preservePitch;
+    } else if (typeof el.webkitPreservesPitch !== "undefined") {
+      el.webkitPreservesPitch = settings.preservePitch;
+    }
+  }, [playbackRate, settings.preservePitch]);
+
+  // Apply loop state
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) audio.loop = isLooping;
+  }, [isLooping]);
 
   // Apply audio output device (setSinkId)
   const applySinkId = useCallback((sinkId: string) => {
     const audio = audioRef.current;
     if (!audio) return;
-    // setSinkId is available on HTMLMediaElement in modern browsers
     if ("setSinkId" in audio) {
       (audio as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> })
         .setSinkId(sinkId)
-        .catch(() => {
-          // Silently fail — device may not be available
-        });
+        .catch(() => {});
     }
   }, []);
 
-  // Listen for global sink ID changes
   useEffect(() => {
-    // Apply current sink ID on mount
     applySinkId(getGlobalSinkId());
-    // Subscribe to future changes
     return onSinkIdChange(applySinkId);
   }, [applySinkId]);
 
@@ -87,13 +120,11 @@ export default function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) return;
 
-    // Set up Web Audio API for waveform visualization
     const audioCtx = new AudioContext();
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
     analyserRef.current = analyser;
 
-    // Only create source node once per audio element
     if (!sourceRef.current) {
       const source = audioCtx.createMediaElementSource(audio);
       source.connect(analyser);
@@ -117,7 +148,6 @@ export default function AudioPlayer({
   const togglePlay = async () => {
     const audio = audioRef.current;
     if (!audio) return;
-
     if (isPlaying) {
       audio.pause();
     } else {
@@ -164,14 +194,15 @@ export default function AudioPlayer({
         className="w-full h-12 rounded bg-surface-1"
       />
 
-      {/* Controls */}
-      <div className="flex items-center gap-3">
+      {/* Transport controls */}
+      <div className="flex items-center gap-2">
+        {/* Play/Pause */}
         <button
           onClick={togglePlay}
           className="
             flex h-8 w-8 items-center justify-center rounded-full
             bg-accent text-surface-0 hover:bg-accent-hover
-            transition-colors
+            transition-colors shrink-0
           "
         >
           {isPlaying ? (
@@ -180,24 +211,77 @@ export default function AudioPlayer({
               <rect x="7" y="1" width="4" height="10" rx="1" />
             </svg>
           ) : (
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              fill="currentColor"
-            >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
               <polygon points="2,0 12,6 2,12" />
             </svg>
           )}
         </button>
 
+        {/* Loop toggle */}
+        <button
+          onClick={() => setIsLooping(!isLooping)}
+          className={`
+            flex h-7 w-7 items-center justify-center rounded
+            transition-colors text-xs shrink-0
+            ${
+              isLooping
+                ? "bg-accent/20 text-accent border border-accent/40"
+                : "text-text-muted hover:text-text-secondary border border-transparent"
+            }
+          `}
+          title={isLooping ? "Loop ON" : "Loop OFF"}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M17 2l4 4-4 4" />
+            <path d="M3 11V9a4 4 0 014-4h14" />
+            <path d="M7 22l-4-4 4-4" />
+            <path d="M21 13v2a4 4 0 01-4 4H3" />
+          </svg>
+        </button>
+
+        {/* Time display */}
         <div className="flex-1 text-xs tabular-nums text-text-secondary">
           {formatTime(currentTime)} / {formatTime(duration)}
         </div>
 
+        {/* Source BPM input */}
+        <div className="flex items-center gap-1">
+          <label className="text-xs text-text-muted">BPM</label>
+          <input
+            type="number"
+            value={sourceBpm || ""}
+            onChange={(e) => {
+              const val = parseInt(e.target.value) || 0;
+              setSourceBpm(entryId, Math.max(0, Math.min(300, val)));
+            }}
+            placeholder="?"
+            className="
+              w-12 rounded border border-border bg-surface-1 px-1 py-0.5
+              text-xs tabular-nums text-text-primary text-center
+              focus:border-accent focus:outline-none
+              placeholder:text-text-muted
+            "
+          />
+        </div>
+
+        {/* Rate display */}
+        {sourceBpm > 0 && settings.masterBpm > 0 && (
+          <span className="text-xs tabular-nums text-accent">
+            {playbackRate.toFixed(2)}x
+          </span>
+        )}
+
+        {/* Download */}
         <button
           onClick={handleDownload}
-          className="text-xs text-text-secondary hover:text-accent transition-colors"
+          className="text-text-secondary hover:text-accent transition-colors shrink-0"
           title="Download WAV"
         >
           <svg

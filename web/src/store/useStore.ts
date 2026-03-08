@@ -11,6 +11,7 @@ import {
   loadAllEntries,
   deleteEntry,
   updateFavorite,
+  updateSourceBpm,
   clearAllEntries,
   purgeExpiredEntries,
   loadSettings,
@@ -26,6 +27,7 @@ export interface HistoryEntry {
   audioUrl: string; // blob: URL for local playback
   favorite: boolean;
   createdAt: number;
+  sourceBpm: number; // 0 = unknown
 }
 
 interface AppState {
@@ -53,6 +55,7 @@ interface AppState {
   historyLoaded: boolean;
   loadHistory: () => Promise<void>;
   toggleFavorite: (id: string) => Promise<void>;
+  setSourceBpm: (id: string, bpm: number) => Promise<void>;
   deleteHistoryEntry: (id: string) => Promise<void>;
   clearHistory: () => Promise<void>;
 
@@ -89,6 +92,7 @@ function toHistoryEntry(entry: PersistedEntry): HistoryEntry {
     audioUrl: URL.createObjectURL(entry.audioBlob),
     favorite: entry.favorite,
     createdAt: entry.createdAt,
+    sourceBpm: entry.sourceBpm ?? 0,
   };
 }
 
@@ -163,6 +167,7 @@ export const useStore = create<AppState>((set, get) => ({
           audioBlob,
           favorite: false,
           createdAt: now,
+          sourceBpm: 0,
         };
         await saveEntry(persisted);
 
@@ -173,6 +178,7 @@ export const useStore = create<AppState>((set, get) => ({
           audioUrl: URL.createObjectURL(audioBlob),
           favorite: false,
           createdAt: now,
+          sourceBpm: 0,
         };
         set((s) => ({
           history: [entry, ...s.history],
@@ -228,6 +234,15 @@ export const useStore = create<AppState>((set, get) => ({
     }));
   },
 
+  setSourceBpm: async (id: string, bpm: number) => {
+    await updateSourceBpm(id, bpm);
+    set((s) => ({
+      history: s.history.map((h) =>
+        h.id === id ? { ...h, sourceBpm: bpm } : h,
+      ),
+    }));
+  },
+
   deleteHistoryEntry: async (id: string) => {
     // Revoke blob URL to free memory
     const entry = get().history.find((h) => h.id === id);
@@ -247,7 +262,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   // --- Settings ---
-  settings: { retentionHours: 0 },
+  settings: { retentionHours: 0, masterBpm: 120, preservePitch: true },
   settingsLoaded: false,
   loadSettings: async () => {
     try {
