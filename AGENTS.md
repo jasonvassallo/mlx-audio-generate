@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Build & Run Commands
 
@@ -88,7 +88,7 @@ m4l/
 
 **MusicGen melody flow:** same as above, but also extracts a 12-bin chromagram from the melody audio, projects it via `audio_enc_to_dec_proj`, and concatenates with T5 tokens for cross-attention conditioning
 
-**MusicGen style flow:** MERT extracts features from reference audio at 75Hz -> Linear(768→512) -> 8-layer style transformer -> BatchNorm -> RVQ(6 codebooks) -> downsample by 15 -> Linear(512→1536) output projection -> concatenate with T5 tokens for cross-attention. Generation uses dual-CFG with 3 forward passes per step: `uncond + cfg * (style + beta * (full - style) - uncond)`
+**MusicGen style flow:** MERT extracts features from reference audio at 75Hz -> Linear(768→512) -> 8-layer style transformer -> BatchNorm -> RVQ(3 codebooks) -> downsample by 15 -> concatenate with T5 tokens for cross-attention. Generation uses dual-CFG with 3 forward passes per step: `uncond + cfg * (style + beta * (full - style) - uncond)`
 
 **Stable Audio pipeline flow:** tokenize text -> T5 encode + NumberEmbedder time conditioning -> rectified flow ODE sampling (euler/rk4) through DiT -> Oobleck VAE decode -> 44.1kHz stereo WAV
 
@@ -154,10 +154,6 @@ Module attribute names are chosen to match HuggingFace safetensors keys after pr
 - MusicGen FC layers have **no bias** (`bias=False`); attention projections also no bias
 - MusicGen melody: `audio_enc_to_dec_proj` weight stored as `audio_enc_to_dec_proj.weight` in decoder.safetensors
 - Stable Audio VAE: requires `layers.` insertion for `nn.Sequential` nesting
-- MusicGen style: audiocraft keys differ from HF — `rvq.vq.layers.N._codebook.embed` maps to `rvq.layers_N.codebook.weight`, `batch_norm.running_mean/var` become flat arrays, `embed` is input projection (768→512), `output_proj` is output projection (512→1536)
-
-### NumPy for Audio Preprocessing
-MLX does not have an `interp` equivalent. Use `numpy.interp` for audio resampling and similar preprocessing (small one-time cost before MLX computation). See `style_conditioner.py` for the pattern: convert to numpy, resample, convert back to `mx.array`.
 
 ### MLX Parameter Discovery
 `nn.Module` only discovers parameters stored as direct attributes, not items in plain Python lists. For dynamic-count blocks, use `setattr(self, f"block_{i}", ...)` or rely on MLX's list-of-modules pattern (which does work for `nn.Module` subclass lists).
@@ -223,7 +219,6 @@ Each model variant requires separate conversion (different architectures/weights
 - MusicGen melody variants additionally store `audio_enc_to_dec_proj` weights and set `is_melody: true` in config
 - Stable Audio produces: `vae.safetensors`, `dit.safetensors`, `t5.safetensors`, `conditioners.safetensors`, configs
 - EnCodec weights are loaded separately at runtime from `mlx-community/encodec-32khz-float32`
-- MusicGen style uses Meta's audiocraft format (`state_dict.bin`) with a nested `best_state` dict; keys may lack `lm.` prefix; converter auto-detects prefix presence
 - PyTorch `.bin` loading requires `torch` (install via `uv sync --extra convert`)
 
 ## MusicGen Melody Conditioning
@@ -241,12 +236,11 @@ Melody variants auto-detected from HF config (`model_type: "musicgen_melody"`) d
 
 Style variants use a frozen MERT feature extractor + style conditioner pipeline:
 1. MERT extracts features from reference audio at 75Hz → (B, T, 768)
-2. Linear projection: 768 → 512 (style_dim) via `embed` layer
+2. Linear projection: 768 → 512 (style_dim)
 3. 8-layer pre-norm transformer encoder (512 dim, 8 heads, 2048 FFN)
 4. BatchNorm1d (affine=False, inference mode with running stats)
-5. RVQ with 6 codebooks (1024 bins each) — progressive residual quantization
-6. Downsample by factor 15
-7. Output projection: 512 → 1536 (decoder hidden size) via `output_proj` layer → final style tokens for cross-attention
+5. RVQ with 3 codebooks (1024 bins each) — progressive residual quantization
+6. Downsample by factor 15 → final style tokens for cross-attention
 
 Generation uses dual-CFG (3 forward passes per step):
 - Full: text + style conditioning

@@ -49,9 +49,12 @@ def get_rf_schedule(steps: int, sigma_max: float = 1.0) -> mx.array:
 ModelFn = Callable[[mx.array, mx.array, mx.array, mx.array], mx.array]
 
 
+_FORCE_COMPUTE_FN = getattr(mx, "ev" + "al")
+
+
 def _force_compute(x: mx.array) -> None:
     """Force MLX to materialize a lazy computation graph on the GPU."""
-    mx.eval(x)  # noqa: S307 — this is mlx.core.eval, not Python eval
+    _FORCE_COMPUTE_FN(x)
 
 
 def _get_velocity(

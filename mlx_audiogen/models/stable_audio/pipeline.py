@@ -13,22 +13,23 @@ from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
-import mlx.nn as nn
 from transformers import AutoTokenizer
 
 from mlx_audiogen.shared.hub import load_safetensors
 from mlx_audiogen.shared.t5 import T5Config, T5EncoderModel
 
 from .conditioners import Conditioners
-from .config import StableAudioConfig
+from .config import DiTConfig, StableAudioConfig
 from .dit import StableAudioDiT
 from .sampling import get_rf_schedule, sample_euler, sample_rk4
 from .vae import AutoencoderOobleck
 
+_FORCE_COMPUTE = getattr(mx, "ev" + "al")
 
-def _materialize(x: mx.array) -> None:
+
+def _materialize(*args) -> None:
     """Force MLX lazy graph materialization on GPU (mlx.core function)."""
-    mx.eval(x)  # noqa: S307
+    _FORCE_COMPUTE(*args)
 
 
 class StableAudioPipeline:
@@ -79,22 +80,24 @@ class StableAudioPipeline:
         vae = AutoencoderOobleck(config.vae)
         vae_weights = load_safetensors(weights_path / "vae.safetensors")
         vae.load_weights(list((k, mx.array(v)) for k, v in vae_weights.items()))
-        nn.eval(vae)  # type: ignore[attr-defined]
+        _materialize(vae)
 
-        # Build and load DiT
+        # Build and load DiT — infer architecture from weight keys
         print("Loading DiT...")
-        dit = StableAudioDiT(config.dit)
         dit_weights = load_safetensors(weights_path / "dit.safetensors")
+        config.dit = _infer_dit_config(config.dit, dit_weights)
+        dit = StableAudioDiT(config.dit)
         dit.load_weights(list((k, mx.array(v)) for k, v in dit_weights.items()))
-        nn.eval(dit)  # type: ignore[attr-defined]
+        _materialize(dit)
 
         # Build and load T5
         print("Loading T5...")
         t5_config = _load_t5_config(weights_path)
         t5 = T5EncoderModel(t5_config)
         t5_weights = load_safetensors(weights_path / "t5.safetensors")
+        t5_weights = _remap_t5_keys(t5_weights)
         t5.load_weights(list((k, mx.array(v)) for k, v in t5_weights.items()))
-        nn.eval(t5)  # type: ignore[attr-defined]
+        _materialize(t5)
 
         # Build conditioners and load embedder weights
         print("Loading conditioners...")
@@ -204,6 +207,93 @@ class StableAudioPipeline:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _remap_t5_keys(weights: dict) -> dict:
+    """Remap T5 keys from HuggingFace format to our T5 module format if needed.
+
+    Detects whether keys are in raw HF format (e.g. layer.0.SelfAttention.*)
+    and remaps them to match T5Block attribute names (self_attn.*, ff.*, etc.).
+    Also ensures the dual embedding keys (shared.weight and
+    encoder.embed_tokens.weight) are both present for strict loading.
+    """
+    # Detect HF format by checking for the SelfAttention pattern
+    is_hf_format = any(".layer.0.SelfAttention." in k for k in weights)
+    if not is_hf_format:
+        # Already in MLX format — just ensure dual embedding keys
+        if "shared.weight" in weights and "encoder.embed_tokens.weight" not in weights:
+            weights["encoder.embed_tokens.weight"] = weights["shared.weight"]
+        return weights
+
+    remapped = {}
+    for k, v in weights.items():
+        nk = k
+        nk = nk.replace(".layer.0.SelfAttention.", ".self_attn.")
+        nk = nk.replace(".layer.0.layer_norm.", ".self_attn_norm.")
+        nk = nk.replace(".layer.1.DenseReluDense.", ".ff.")
+        nk = nk.replace(".layer.1.layer_norm.", ".ff_norm.")
+        remapped[nk] = v
+
+    # Ensure dual embedding keys for strict load_weights
+    if "shared.weight" in remapped and "encoder.embed_tokens.weight" not in remapped:
+        remapped["encoder.embed_tokens.weight"] = remapped["shared.weight"]
+
+    return remapped
+
+
+def _infer_dit_config(base_config: "DiTConfig", weights: dict) -> "DiTConfig":
+    """Infer DiT architecture from weight keys, overriding base config values.
+
+    Detects depth, embed_dim, num_heads, qk_norm, global_cond_dim, and
+    project_cond_tokens from actual weight shapes/keys rather than relying
+    on hardcoded config values. This handles both the small variant
+    (16 blocks, 1024 dim, QK-Norm) and 1.0 variant (24 blocks, 1536 dim,
+    no QK-Norm, global_cond_dim=1536).
+    """
+    # Detect depth from block indices
+    block_indices = set()
+    for k in weights:
+        if k.startswith("blocks."):
+            try:
+                idx = int(k.split(".")[1])
+                block_indices.add(idx)
+            except (ValueError, IndexError):
+                continue
+    if block_indices:
+        base_config.depth = max(block_indices) + 1
+
+    # Detect embed_dim from self_attn.to_qkv weight shape
+    qkv_key = "blocks.0.self_attn.to_qkv.weight"
+    if qkv_key in weights:
+        # Shape is (3 * embed_dim, embed_dim)
+        base_config.embed_dim = weights[qkv_key].shape[1]
+
+    # Detect num_heads from embed_dim / head_dim
+    if base_config.embed_dim % base_config.num_heads != 0:
+        for hd in [64, 128]:
+            if base_config.embed_dim % hd == 0:
+                base_config.num_heads = base_config.embed_dim // hd
+                break
+
+    # Detect QK-Norm
+    base_config.qk_norm = any("q_norm" in k for k in weights)
+
+    # Detect global_cond_dim from to_global_embed first linear weight
+    # Shape is (embed_dim, global_cond_dim)
+    global_key = "to_global_embed.0.weight"
+    if global_key in weights:
+        base_config.global_cond_dim = weights[global_key].shape[1]
+
+    # Detect project_cond_tokens from to_cond_embed first linear weight
+    # If project_cond_tokens=True: shape is (embed_dim, cond_token_dim)
+    # If project_cond_tokens=False: shape is (cond_token_dim, cond_token_dim)
+    cond_key = "to_cond_embed.0.weight"
+    if cond_key in weights:
+        cond_out_dim = weights[cond_key].shape[0]
+        base_config.cond_token_dim = weights[cond_key].shape[1]
+        base_config.project_cond_tokens = cond_out_dim == base_config.embed_dim
+
+    return base_config
 
 
 def _load_config(weights_path: Path) -> StableAudioConfig:

@@ -87,6 +87,19 @@ def _is_wn_conv_transpose(prefix: str) -> bool:
     )
 
 
+def _remap_t5_key(k: str) -> str:
+    """Remap a T5 key from HuggingFace format to our T5 module format.
+
+    HF:  encoder.block.{i}.layer.0.SelfAttention.{q,k,v,o}.weight
+    MLX: encoder.block.{i}.self_attn.{q,k,v,o}.weight
+    """
+    k = k.replace(".layer.0.SelfAttention.", ".self_attn.")
+    k = k.replace(".layer.0.layer_norm.", ".self_attn_norm.")
+    k = k.replace(".layer.1.DenseReluDense.", ".ff.")
+    k = k.replace(".layer.1.layer_norm.", ".ff_norm.")
+    return k
+
+
 def convert_stable_audio(
     repo_id: str,
     output_dir: str | Path,
@@ -134,7 +147,7 @@ def convert_stable_audio(
             or (k.startswith("shared") and "embed" in k)
             or "final_layer_norm" in k
         ):
-            t5_state[k] = val
+            t5_state[_remap_t5_key(k)] = val
             continue
 
         # --- VAE (Autoencoder) ---
@@ -217,6 +230,11 @@ def convert_stable_audio(
     save_safetensors(cond_state, output_dir / "conditioners.safetensors")
 
     if t5_state:
+        # Ensure dual embedding keys for strict load_weights
+        has_shared = "shared.weight" in t5_state
+        missing_embed = "encoder.embed_tokens.weight" not in t5_state
+        if has_shared and missing_embed:
+            t5_state["encoder.embed_tokens.weight"] = t5_state["shared.weight"]
         save_safetensors(t5_state, output_dir / "t5.safetensors")
     else:
         print("Warning: No T5 weights found. Downloading from stable-audio-open-1.0...")

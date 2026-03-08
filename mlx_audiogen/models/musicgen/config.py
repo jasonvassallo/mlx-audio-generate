@@ -121,9 +121,10 @@ class MusicGenConfig:
     style_num_layers: int = 8
     style_ffn_dim: int = 2048
     style_ds_factor: int = 15
-    style_n_q: int = 3
+    style_n_q: int = 6
     style_bins: int = 1024
     style_excerpt_length: float = 3.0
+    style_output_dim: int = 1536  # Output projection to decoder hidden
 
     @classmethod
     def from_dict(cls, d: dict) -> "MusicGenConfig":
@@ -151,7 +152,8 @@ class MusicGenConfig:
             style_num_layers=d.get("style_num_layers", 8),
             style_ffn_dim=d.get("style_ffn_dim", 2048),
             style_ds_factor=d.get("style_ds_factor", 15),
-            style_n_q=d.get("style_n_q", 3),
+            style_n_q=d.get("style_n_q", 6),
             style_bins=d.get("style_bins", 1024),
             style_excerpt_length=d.get("style_excerpt_length", 3.0),
+            style_output_dim=d.get("style_output_dim", 1536),
         )

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 
 from .mert import MERTModel
 
@@ -31,11 +32,12 @@ class StyleConfig:
     num_layers: int = 8
     ffn_dim: int = 2048
     ds_factor: int = 15
-    n_q: int = 3  # Number of RVQ codebooks at eval
+    n_q: int = 6  # Number of RVQ codebooks at eval
     bins: int = 1024  # Codebook size
     excerpt_length: float = 3.0  # Seconds of audio to extract
     mert_sample_rate: int = 24000  # MERT input sample rate
     mert_hidden_size: int = 768
+    output_dim: int = 1536  # Decoder hidden size for output projection
 
 
 class StyleTransformerBlock(nn.Module):
@@ -186,7 +188,7 @@ class StyleConditioner(nn.Module):
         # MERT feature extractor (loaded separately)
         self.mert = MERTModel()
 
-        # Linear projection from MERT dim to style dim
+        # Input projection from MERT dim to style dim (768 → 512)
         self.embed = nn.Linear(config.mert_hidden_size, config.dim)
 
         # Style transformer encoder
@@ -203,6 +205,9 @@ class StyleConditioner(nn.Module):
         # Residual vector quantizer
         self.rvq = ResidualVectorQuantizer(config.dim, n_q=config.n_q, bins=config.bins)
 
+        # Output projection from style dim to decoder hidden (512 → 1536)
+        self.output_proj = nn.Linear(config.dim, config.output_dim)
+
         self.ds_factor = config.ds_factor
 
     def __call__(self, audio: mx.array, sample_rate: int = 32000) -> mx.array:
@@ -215,21 +220,24 @@ class StyleConditioner(nn.Module):
         Returns:
             Style tokens, shape (B, T', style_dim) for cross-attention.
         """
-        # Resample to MERT's 24kHz if needed
+        # Resample to MERT's 24kHz if needed.
+        # Use numpy for interpolation (small one-time preprocessing cost)
+        # since MLX doesn't expose np.interp.
         mert_sr = self.config.mert_sample_rate
         if sample_rate != mert_sr:
+            audio_np = np.array(audio)
             ratio = mert_sr / sample_rate
-            new_len = int(audio.shape[-1] * ratio)
-            old_indices = mx.arange(audio.shape[-1]).astype(mx.float32)
-            new_indices = mx.linspace(0, audio.shape[-1] - 1, new_len)
-            if audio.ndim == 1:
-                audio = mx.interp(new_indices, old_indices, audio)
+            new_len = int(audio_np.shape[-1] * ratio)
+            old_indices = np.arange(audio_np.shape[-1], dtype=np.float64)
+            new_indices = np.linspace(0, audio_np.shape[-1] - 1, new_len)
+            if audio_np.ndim == 1:
+                audio_np = np.interp(new_indices, old_indices, audio_np)
             else:
-                # Per-batch resampling
                 resampled = []
-                for i in range(audio.shape[0]):
-                    resampled.append(mx.interp(new_indices, old_indices, audio[i]))
-                audio = mx.stack(resampled)
+                for i in range(audio_np.shape[0]):
+                    resampled.append(np.interp(new_indices, old_indices, audio_np[i]))
+                audio_np = np.stack(resampled)
+            audio = mx.array(audio_np.astype(np.float32))
 
         # Extract center excerpt
         excerpt_samples = int(self.config.excerpt_length * mert_sr)
@@ -261,5 +269,8 @@ class StyleConditioner(nn.Module):
 
         # Downsample by fixed factor
         features = features[:, :: self.ds_factor]
+
+        # Project to decoder hidden dimension (512 → 1536)
+        features = self.output_proj(features)
 
         return features

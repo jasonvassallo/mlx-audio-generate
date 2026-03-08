@@ -17,6 +17,7 @@ class DiTConfig:
     global_cond_type: str = "prepend"
     patch_size: int = 1
     timestep_features_dim: int = 256
+    qk_norm: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "DiTConfig":

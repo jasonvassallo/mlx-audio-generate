@@ -277,6 +277,38 @@ def convert_musicgen(
     print(f"\nConversion complete! Weights saved to {output_dir}/")
 
 
+def _load_audiocraft_state_dict(path: Path) -> dict[str, np.ndarray]:
+    """Load an audiocraft state_dict.bin and extract tensor weights.
+
+    Audiocraft checkpoints wrap weights under a 'best_state' key alongside
+    metadata (xp.cfg, version, exported). This function unwraps that nesting
+    and converts all tensors to numpy arrays.
+    """
+    try:
+        import torch
+    except ImportError as exc:
+        raise ImportError(
+            "PyTorch is required to load audiocraft .bin files. "
+            "Install it with: uv sync --extra convert"
+        ) from exc
+
+    checkpoint = torch.load(  # nosec B614 — known HF model file
+        str(path), map_location="cpu", weights_only=False
+    )
+
+    # Unwrap 'best_state' if present (standard audiocraft format)
+    if isinstance(checkpoint, dict) and "best_state" in checkpoint:
+        state_dict = checkpoint["best_state"]
+    else:
+        state_dict = checkpoint
+
+    weights: dict[str, np.ndarray] = {}
+    for key, val in state_dict.items():
+        if hasattr(val, "numpy"):
+            weights[key] = val.numpy()
+    return weights
+
+
 def convert_musicgen_style(
     repo_id: str,
     output_dir: str | Path,
@@ -319,19 +351,7 @@ def convert_musicgen_style(
             f"state_dict.bin not found in {model_path}. "
             "This converter is for audiocraft-format models."
         )
-    raw_weights = load_pytorch_bin(state_dict_file)
-
-    # Audiocraft wraps under 'best_state' key — unwrap if present
-    if "best_state" in raw_weights:
-        # The best_state value is itself a dict stored as a single tensor
-        # Actually, torch.load returns nested dicts — load_pytorch_bin
-        # should handle this. Let's check for the prefix pattern instead.
-        pass
-
-    # Check if weights have 'best_state.' prefix (some audiocraft checkpoints)
-    has_prefix = any(k.startswith("best_state.") for k in raw_weights)
-    if has_prefix:
-        raw_weights = {k.removeprefix("best_state."): v for k, v in raw_weights.items()}
+    raw_weights = _load_audiocraft_state_dict(state_dict_file)
 
     # Sort weights into buckets
     t5_state: dict[str, np.ndarray] = {}
@@ -341,6 +361,10 @@ def convert_musicgen_style(
 
     total = len(raw_weights)
     print(f"Processing {total} tensors from audiocraft format...")
+
+    # Audiocraft best_state can store decoder keys with or without 'lm.' prefix.
+    # Detect whether 'lm.' prefix is present; if not, we add it for routing.
+    has_lm_prefix = any(k.startswith("lm.") for k in raw_weights)
 
     for k, val in raw_weights.items():
         # --- T5 text encoder ---
@@ -366,8 +390,10 @@ def convert_musicgen_style(
             continue
 
         # --- Decoder transformer ---
-        if k.startswith("lm."):
-            dec_key = _remap_audiocraft_decoder_key(k, val)
+        # Normalize to lm.-prefixed key for the remapper
+        remap_key = k if has_lm_prefix else f"lm.{k}"
+        if remap_key.startswith("lm."):
+            dec_key = _remap_audiocraft_decoder_key(remap_key, val)
             if dec_key is not None:
                 if isinstance(dec_key, list):
                     # Fused weight was split into multiple keys
@@ -375,9 +401,13 @@ def convert_musicgen_style(
                         decoder_state[dk] = dv
                 else:
                     decoder_state[dec_key] = val
-            continue
+                continue
 
         skipped += 1
+
+    # T5 is not in the audiocraft checkpoint — download from google-t5/t5-base
+    if not t5_state:
+        t5_state = _download_t5_weights(dtype)
 
     # T5 shared embedding duplication
     if "shared.weight" in t5_state and "encoder.embed_tokens.weight" not in t5_state:
@@ -443,18 +473,21 @@ def _remap_style_key(k: str) -> str | None:
     """Remap an audiocraft style conditioner key to our module format.
 
     Audiocraft style keys (after stripping condition_provider.conditioners.self_wav.):
-        output_proj.{embed}.weight  -> embed.weight
-        transformer.{layer_key}     -> transformer_layers.{remapped}
-        out_norm.{running_mean/var} -> batch_norm_running_{mean/var}
-        quantizer.rvq.layers.{i}._codebook.embed -> rvq.layers_{i}.codebook.weight
+        embed.{weight/bias}        -> embed.{weight/bias}  (input proj: 768→512)
+        output_proj.{weight/bias}  -> output_proj.{weight/bias}  (output proj: 512→1536)
+        transformer.{layer_key}    -> transformer_layers.{remapped}
+        batch_norm.{running_mean/var} -> batch_norm_running_{mean/var}
+        rvq.vq.layers.{i}._codebook.embed -> rvq.layers_{i}.codebook.weight
 
     Returns None for keys we don't need.
     """
-    # Embedding projection
+    # Input embedding projection (MERT 768 → style_dim 512)
+    if k.startswith("embed."):
+        return k  # Already named correctly
+
+    # Output projection (style_dim 512 → decoder hidden 1536)
     if k.startswith("output_proj."):
-        # output_proj.weight, output_proj.bias -> embed.weight, embed.bias
-        suffix = k[len("output_proj.") :]
-        return f"embed.{suffix}"
+        return k  # Keep as output_proj
 
     # Style transformer layers
     if k.startswith("transformer."):
@@ -462,22 +495,23 @@ def _remap_style_key(k: str) -> str | None:
         return _remap_style_transformer_key(rest)
 
     # Batch normalization running statistics
-    if k == "out_norm.running_mean":
+    if k == "batch_norm.running_mean":
         return "batch_norm_running_mean"
-    if k == "out_norm.running_var":
+    if k == "batch_norm.running_var":
         return "batch_norm_running_var"
-    if k == "out_norm.num_batches_tracked":
+    if k == "batch_norm.num_batches_tracked":
         return None  # Not needed for inference
 
     # RVQ codebook embeddings
-    # quantizer.rvq.layers.{i}._codebook.embed -> rvq.layers_{i}.codebook.weight
-    if k.startswith("quantizer.rvq.layers."):
-        rest = k[len("quantizer.rvq.layers.") :]
+    # rvq.vq.layers.{i}._codebook.embed -> rvq.layers_{i}.codebook.weight
+    if k.startswith("rvq.vq.layers."):
+        rest = k[len("rvq.vq.layers.") :]
         # rest: "0._codebook.embed" or similar
         parts = rest.split(".", 1)
         layer_idx = parts[0]
-        if len(parts) > 1 and "_codebook.embed" in parts[1]:
+        if len(parts) > 1 and parts[1] == "_codebook.embed":
             return f"rvq.layers_{layer_idx}.codebook.weight"
+        # Skip embed_avg, cluster_size, inited (training-only)
         return None
 
     return None
@@ -619,6 +653,40 @@ def _remap_audiocraft_transformer_layer(
     return k
 
 
+def _download_t5_weights(dtype: str | None = None) -> dict[str, np.ndarray]:
+    """Download T5-base encoder weights and remap to our T5 module format.
+
+    Audiocraft loads T5 at runtime from HuggingFace, so it's not in the
+    checkpoint. We download the encoder weights and apply key remapping.
+    """
+    print("Downloading T5-base encoder weights...")
+    t5_path = download_model(
+        "google-t5/t5-base",
+        allow_patterns=["model.safetensors", "*.json"],
+    )
+
+    all_weights = load_safetensors(t5_path / "model.safetensors")
+    t5_state: dict[str, np.ndarray] = {}
+    for k, v in all_weights.items():
+        # Only keep encoder weights (skip decoder)
+        if k.startswith("encoder.") or k.startswith("shared."):
+            t5_state[_remap_t5_key(k)] = v
+
+    if dtype:
+        dtype_map = {
+            "float16": np.float16,
+            "bfloat16": np.float16,
+            "float32": np.float32,
+        }
+        np_dtype = dtype_map[dtype]
+        for k in t5_state:
+            if t5_state[k].dtype in (np.float32, np.float64):
+                t5_state[k] = t5_state[k].astype(np_dtype)
+
+    print(f"  T5: {len(t5_state)} tensors")
+    return t5_state
+
+
 def _convert_mert_weights(output_dir: Path, dtype: str | None = None) -> None:
     """Download and convert MERT-v1-95M weights to MLX safetensors.
 
@@ -687,12 +755,34 @@ def _remap_mert_key(k: str) -> str | None:
         encoder.layers.{i}.feed_forward.output_dense.{weight/bias}
         encoder.layers.{i}.final_layer_norm.{weight/bias}
     """
-    # Strip 'hubert.' prefix — our model doesn't have it
+    # Strip 'hubert.' prefix if present — our model doesn't have it
     if k.startswith("hubert."):
         return k[len("hubert.") :]
 
-    # Skip non-hubert keys (like masked_spec_embed, projector, etc.)
+    # Accept keys already in our format (encoder.*, feature_*)
+    if k.startswith(("encoder.", "feature_extractor.", "feature_projection.")):
+        return k
+
+    # Skip non-model keys (like masked_spec_embed, projector, etc.)
     return None
+
+
+def _count_rvq_codebooks(raw_weights: dict, has_lm: bool) -> int:
+    """Count RVQ codebook layers from weight keys.
+
+    Audiocraft stores codebooks as rvq.vq.layers.{i}._codebook.embed.
+    We look under the self_wav conditioner prefix for these keys.
+    """
+    max_idx = -1
+    for k in raw_weights:
+        if "self_wav.rvq.vq.layers." in k and "_codebook.embed" in k:
+            # Extract layer index
+            rest = k.split("self_wav.rvq.vq.layers.")[-1]
+            idx = int(rest.split(".")[0])
+            # Only count actual codebook embed (not embed_avg)
+            if rest.endswith("_codebook.embed"):
+                max_idx = max(max_idx, idx)
+    return max_idx + 1 if max_idx >= 0 else 3  # Default to 3 if not found
 
 
 def _save_style_configs(output_dir: Path, raw_weights: dict, repo_id: str) -> None:
@@ -701,30 +791,37 @@ def _save_style_configs(output_dir: Path, raw_weights: dict, repo_id: str) -> No
     Since audiocraft-format models don't have a HF config.json, we infer
     the configuration from the weight shapes.
     """
-    # Infer decoder config from weight shapes
+    # Infer decoder config from weight shapes.
+    # Audiocraft keys lack 'lm.' prefix; HF keys have it. Handle both.
+    has_lm = any(k.startswith("lm.") for k in raw_weights)
+    lm_prefix = "lm." if has_lm else ""
+
     hidden_size = 1024  # Default for musicgen-style (small)
     num_codebooks = 4
     ffn_dim = 4096
 
     # Try to infer from weights
+    linear1_key = f"{lm_prefix}transformer.layers.0.linear1.weight"
     for k, v in raw_weights.items():
-        if "lm.transformer.layers.0.linear1.weight" in k:
+        if k == linear1_key:
             ffn_dim = v.shape[0]
             hidden_size = v.shape[1]
             break
 
     # Count decoder layers
+    layer_prefix = f"{lm_prefix}transformer.layers."
     num_layers = 0
     for k in raw_weights:
-        if "lm.transformer.layers." in k:
-            parts = k.split("lm.transformer.layers.")[-1]
+        if layer_prefix in k:
+            parts = k.split(layer_prefix)[-1]
             layer_idx = int(parts.split(".")[0])
             num_layers = max(num_layers, layer_idx + 1)
 
     # Count codebooks from embedding count
+    emb_prefix = f"{lm_prefix}emb."
     for k in raw_weights:
-        if k.startswith("lm.emb."):
-            idx = int(k.split("lm.emb.")[-1].split(".")[0])
+        if emb_prefix in k:
+            idx = int(k.split(emb_prefix)[-1].split(".")[0])
             num_codebooks = max(num_codebooks, idx + 1)
 
     config = {
@@ -737,8 +834,8 @@ def _save_style_configs(output_dir: Path, raw_weights: dict, repo_id: str) -> No
             "ffn_dim": ffn_dim,
             "num_codebooks": num_codebooks,
             "vocab_size": 2048,
-            "bos_token_id": 2048,
-            "pad_token_id": 2048,
+            "bos_token_id": 2048,  # nosec B105 — token ID, not a password
+            "pad_token_id": 2048,  # nosec B105 — token ID, not a password
         },
         "audio_encoder": {
             "codebook_size": 2048,
@@ -753,15 +850,16 @@ def _save_style_configs(output_dir: Path, raw_weights: dict, repo_id: str) -> No
             "num_layers": 12,
             "vocab_size": 32128,
         },
-        # Style-specific config
+        # Style-specific config (inferred from weights where possible)
         "style_dim": 512,
         "style_num_heads": 8,
         "style_num_layers": 8,
         "style_ffn_dim": 2048,
         "style_ds_factor": 15,
-        "style_n_q": 3,
+        "style_n_q": _count_rvq_codebooks(raw_weights, has_lm),
         "style_bins": 1024,
         "style_excerpt_length": 3.0,
+        "style_output_dim": hidden_size,  # Output projection to decoder hidden
     }
 
     with open(output_dir / "config.json", "w") as f:

@@ -160,10 +160,13 @@ class Conditioners(nn.Module):
         cross_parts = [t5_tokens] + time_tokens
         cross_attn = mx.concatenate(cross_parts, axis=1)
 
-        # Global conditioning = sum of time embeddings
-        global_cond = global_parts[0]
-        for g in global_parts[1:]:
-            global_cond = global_cond + g
+        # Global conditioning: concatenate if multiple, otherwise use as-is.
+        # Small variant: seconds_total only → (1, 768)
+        # 1.0 variant: [seconds_total, seconds_start] → (1, 1536)
+        if len(global_parts) > 1:
+            global_cond = mx.concatenate(global_parts, axis=-1)
+        else:
+            global_cond = global_parts[0]
 
         return cross_attn, global_cond
 

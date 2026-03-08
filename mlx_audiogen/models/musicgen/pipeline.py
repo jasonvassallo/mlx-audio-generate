@@ -348,6 +348,7 @@ def _load_style_conditioner(
         n_q=config.style_n_q,
         bins=config.style_bins,
         excerpt_length=config.style_excerpt_length,
+        output_dim=config.style_output_dim,
     )
     conditioner = StyleConditioner(style_cfg)
 
@@ -390,17 +391,16 @@ def _extract_style_tokens(
     """Extract style conditioning tokens from reference audio.
 
     If ``style_audio_path`` is provided, loads the audio and runs it through
-    the MERT + style conditioner pipeline. Otherwise returns None (generation
-    will use standard CFG without style conditioning).
-
-    The style tokens are projected from style_dim to the decoder's hidden_size
-    via a simple linear projection so they can be used for cross-attention.
+    the MERT + style conditioner pipeline (MERT → embed → transformer →
+    BatchNorm → RVQ → downsample → output_proj). The output_proj layer
+    maps from style_dim to the decoder's hidden_size, so the returned tokens
+    are ready for cross-attention.
 
     Args:
         conditioner: Loaded StyleConditioner.
         style_audio_path: Path to reference audio file, or None.
         sample_rate: Decoder's native sample rate (e.g., 32000).
-        decoder_hidden_size: Decoder hidden dimension for projection.
+        decoder_hidden_size: Decoder hidden dimension (for validation).
 
     Returns:
         Style tokens, shape (1, T', hidden_size), or None if no audio provided.
@@ -421,32 +421,10 @@ def _extract_style_tokens(
     if audio_mx.ndim == 1:
         audio_mx = audio_mx[mx.newaxis]
 
-    # Run through style conditioner (MERT → transformer → BatchNorm → RVQ → downsample)
+    # Run through style conditioner pipeline
+    # Output is already projected to decoder_hidden_size via output_proj
     style_tokens = conditioner(audio_mx, sample_rate=sr)
     _force_compute(style_tokens)
-
-    # Style tokens are (1, T', style_dim). The decoder expects (1, T', hidden_size).
-    # The style_to_dec_proj projection is handled during conversion — it's stored
-    # as part of the decoder weights if dimensions differ, or style_dim == hidden_size
-    # for the default musicgen-style model.
-    if style_tokens.shape[-1] != decoder_hidden_size:
-        # Simple linear projection if dimensions don't match
-        # In practice, audiocraft uses style_dim=512 and hidden=1024 for the
-        # small model, with a projection layer in the conditioner
-        print(
-            f"  Projecting style tokens: {style_tokens.shape[-1]} → "
-            f"{decoder_hidden_size}"
-        )
-        # Zero-pad if no projection layer available
-        # (conversion should handle this, but fallback for safety)
-        pad_size = decoder_hidden_size - style_tokens.shape[-1]
-        if pad_size > 0:
-            padding = mx.zeros(
-                (*style_tokens.shape[:-1], pad_size), dtype=style_tokens.dtype
-            )
-            style_tokens = mx.concatenate([style_tokens, padding], axis=-1)
-        else:
-            style_tokens = style_tokens[..., :decoder_hidden_size]
 
     print(f"  Style tokens shape: {style_tokens.shape}")
     return style_tokens

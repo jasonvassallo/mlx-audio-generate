@@ -103,17 +103,19 @@ class FeedForward(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int):
+    def __init__(self, dim: int, num_heads: int, qk_norm: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
+        self.qk_norm = qk_norm
 
         self.to_qkv = nn.Linear(dim, dim * 3, bias=False)
         self.to_out = nn.Linear(dim, dim, bias=False)
 
-        self.q_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
-        self.k_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
+        if qk_norm:
+            self.q_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
+            self.k_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
 
     def __call__(
         self, x: mx.array, rotary_freqs: Optional[mx.array] = None
@@ -126,8 +128,9 @@ class SelfAttention(nn.Module):
         k = k.reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
         v = v.reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
 
-        q = self.q_norm(q)
-        k = self.k_norm(k)
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
 
         if rotary_freqs is not None:
             q = apply_rotary_pos_emb(q, rotary_freqs)
@@ -144,19 +147,21 @@ class SelfAttention(nn.Module):
 class CrossAttention(nn.Module):
     """Cross-attention with grouped query attention (GQA) support."""
 
-    def __init__(self, dim: int, cond_dim: int, num_heads: int):
+    def __init__(self, dim: int, cond_dim: int, num_heads: int, qk_norm: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.kv_heads = cond_dim // self.head_dim
         self.scale = self.head_dim**-0.5
+        self.qk_norm = qk_norm
 
         self.to_q = nn.Linear(dim, dim, bias=False)
         self.to_kv = nn.Linear(cond_dim, cond_dim * 2, bias=False)
         self.to_out = nn.Linear(dim, dim, bias=False)
 
-        self.q_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
-        self.k_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
+        if qk_norm:
+            self.q_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
+            self.k_norm = nn.LayerNorm(self.head_dim, eps=1e-6)
 
     def __call__(self, x: mx.array, cond: mx.array) -> mx.array:
         B, L, D = x.shape
@@ -170,8 +175,9 @@ class CrossAttention(nn.Module):
         k = k.reshape(B, S, self.kv_heads, self.head_dim).transpose(0, 2, 1, 3)
         v = v.reshape(B, S, self.kv_heads, self.head_dim).transpose(0, 2, 1, 3)
 
-        q = self.q_norm(q)
-        k = self.k_norm(k)
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
 
         if self.num_heads != self.kv_heads:
             repeats = self.num_heads // self.kv_heads
@@ -192,7 +198,9 @@ class DiTBlock(nn.Module):
     def __init__(self, config: DiTConfig):
         super().__init__()
         self.pre_norm = nn.LayerNorm(config.embed_dim, eps=1e-6)
-        self.self_attn = SelfAttention(config.embed_dim, config.num_heads)
+        self.self_attn = SelfAttention(
+            config.embed_dim, config.num_heads, qk_norm=config.qk_norm
+        )
 
         self.cross_attend = config.cond_token_dim > 0
         if self.cross_attend:
@@ -203,7 +211,7 @@ class DiTBlock(nn.Module):
                 else config.cond_token_dim
             )
             self.cross_attn = CrossAttention(
-                config.embed_dim, cond_dim, config.num_heads
+                config.embed_dim, cond_dim, config.num_heads, qk_norm=config.qk_norm
             )
 
         self.ff_norm = nn.LayerNorm(config.embed_dim, eps=1e-6)
