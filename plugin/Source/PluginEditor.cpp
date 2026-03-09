@@ -49,7 +49,7 @@ static const juce::StringArray KEY_OPTIONS = {
 MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
 {
-    setSize (520, 820);
+    setSize (520, 900);
 
     // Instance name
     instanceNameInput.setColour (juce::TextEditor::backgroundColourId, juce::Colour (bgColour));
@@ -247,6 +247,31 @@ MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     styleSlider (reverbMixSlider, 0, 1, 0.01, proc.reverbMix);
     reverbMixSlider.onValueChange = [this] { proc.reverbMix = (float) reverbMixSlider.getValue(); };
     addAndMakeVisible (reverbMixSlider);
+
+    // --- Beat-grid trimmer ---
+    styleSlider (trimStartSlider, 0, 32, 0.25, 0);  // 0.25 = 16th note (1/4 beat)
+    trimStartSlider.setTextValueSuffix (" beats");
+    trimStartSlider.onValueChange = [this] {
+        proc.trimStartBeats = (float) trimStartSlider.getValue();
+    };
+    addAndMakeVisible (trimStartSlider);
+
+    styleSlider (trimEndSlider, 0, 32, 0.25, 0);
+    trimEndSlider.setTextValueSuffix (" beats");
+    trimEndSlider.onValueChange = [this] {
+        float val = (float) trimEndSlider.getValue();
+        proc.trimEndBeats = val > 0.0f ? val : -1.0f;
+    };
+    addAndMakeVisible (trimEndSlider);
+
+    trimButton.setColour (juce::TextButton::buttonColourId, juce::Colour (surfaceColour));
+    trimButton.setColour (juce::TextButton::textColourOffId, juce::Colour (textColour));
+    trimButton.onClick = [this] { proc.applyTrim(); };
+    addAndMakeVisible (trimButton);
+
+    trimInfoLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
+    trimInfoLabel.setFont (juce::Font (10.0f));
+    addAndMakeVisible (trimInfoLabel);
 
     // --- Preset / Export buttons ---
     auto styleButton = [this] (juce::TextButton& btn) {
@@ -455,9 +480,64 @@ void MLXAudioGenEditor::drawWaveform (juce::Graphics& g, juce::Rectangle<int> bo
     path.closeSubPath();
     g.fillPath (path);
 
-    // Playback position indicator
+    // Beat grid lines (16th notes)
     if (proc.hasAudioLoaded())
     {
+        float totalBeats = proc.getTotalBeats();
+        if (totalBeats > 0.0f)
+        {
+            float sixteenthsTotal = totalBeats * 4.0f;
+            for (int s = 0; s <= (int) sixteenthsTotal; ++s)
+            {
+                float frac = (float) s / sixteenthsTotal;
+                int lineX = bounds.getX() + (int) (frac * width);
+
+                if (s % 16 == 0)
+                {
+                    // Bar line — bright
+                    g.setColour (juce::Colour (textColour).withAlpha (0.4f));
+                }
+                else if (s % 4 == 0)
+                {
+                    // Beat line — medium
+                    g.setColour (juce::Colour (dimTextColour).withAlpha (0.25f));
+                }
+                else
+                {
+                    // 16th note — dim
+                    g.setColour (juce::Colour (dimTextColour).withAlpha (0.1f));
+                }
+
+                g.drawVerticalLine (lineX, (float) bounds.getY(), (float) bounds.getBottom());
+            }
+        }
+
+        // Trim region highlight
+        int trimStart = proc.getTrimStartSamples();
+        int trimEnd = proc.getTrimEndSamples();
+        if (trimStart > 0 || (trimEnd < numSamples && trimEnd > 0))
+        {
+            float startFrac = (float) trimStart / (float) numSamples;
+            float endFrac = (float) trimEnd / (float) numSamples;
+
+            // Dim the outside-of-trim regions
+            g.setColour (juce::Colour (bgColour).withAlpha (0.6f));
+            if (trimStart > 0)
+                g.fillRect (bounds.getX(), bounds.getY(),
+                            (int) (startFrac * width), bounds.getHeight());
+            if (trimEnd < numSamples)
+                g.fillRect (bounds.getX() + (int) (endFrac * width), bounds.getY(),
+                            (int) ((1.0f - endFrac) * width), bounds.getHeight());
+
+            // Trim boundary lines
+            g.setColour (juce::Colour (successColour));
+            g.drawVerticalLine (bounds.getX() + (int) (startFrac * width),
+                                (float) bounds.getY(), (float) bounds.getBottom());
+            g.drawVerticalLine (bounds.getX() + (int) (endFrac * width),
+                                (float) bounds.getY(), (float) bounds.getBottom());
+        }
+
+        // Playback position indicator
         float playProgress = proc.getPlaybackProgress();
         int lineX = bounds.getX() + (int) (playProgress * width);
         g.setColour (juce::Colour (textColour));
@@ -571,6 +651,23 @@ void MLXAudioGenEditor::resized()
     stopButton.setBounds (transportRow.removeFromLeft (80));
     area.removeFromTop (gap);
 
+    // Trim controls
+    auto trimRow1 = area.removeFromTop (rowH);
+    trimRow1.removeFromLeft (labelW);
+    trimStartSlider.setBounds (trimRow1);
+    area.removeFromTop (3);
+
+    auto trimRow2 = area.removeFromTop (rowH);
+    trimRow2.removeFromLeft (labelW);
+    trimEndSlider.setBounds (trimRow2);
+    area.removeFromTop (3);
+
+    auto trimRow3 = area.removeFromTop (20);
+    trimButton.setBounds (trimRow3.removeFromLeft (60));
+    trimRow3.removeFromLeft (4);
+    trimInfoLabel.setBounds (trimRow3);
+    area.removeFromTop (gap);
+
     // Preset / Export
     auto presetRow = area.removeFromTop (24);
     int btnW = (presetRow.getWidth() - 8) / 3;
@@ -668,6 +765,28 @@ void MLXAudioGenEditor::timerCallback()
     // BPM display
     float bpm = proc.getEffectiveBpm();
     bpmDisplay.setText (juce::String ((int) bpm) + " BPM", juce::dontSendNotification);
+
+    // Trim info
+    if (proc.hasAudioLoaded())
+    {
+        float totalBeats = proc.getTotalBeats();
+        trimStartSlider.setRange (0, (double) totalBeats, 0.25);
+        trimEndSlider.setRange (0, (double) totalBeats, 0.25);
+        if (trimEndSlider.getValue() == 0.0)
+            trimEndSlider.setValue (totalBeats, juce::dontSendNotification);
+
+        float startBeats = (float) trimStartSlider.getValue();
+        float endBeats = (float) trimEndSlider.getValue();
+        float trimDur = (endBeats - startBeats) * 60.0f / proc.getEffectiveBpm();
+        trimInfoLabel.setText (
+            juce::String (startBeats, 2) + " → " + juce::String (endBeats, 2)
+            + " beats (" + juce::String (trimDur, 3) + "s)",
+            juce::dontSendNotification);
+    }
+
+    trimButton.setEnabled (proc.hasAudioLoaded());
+    trimStartSlider.setEnabled (proc.hasAudioLoaded());
+    trimEndSlider.setEnabled (proc.hasAudioLoaded());
 
     auto err = proc.getLastError();
     errorLabel.setText (err, juce::dontSendNotification);

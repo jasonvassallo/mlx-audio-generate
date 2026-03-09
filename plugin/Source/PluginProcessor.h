@@ -116,6 +116,21 @@ public:
     float reverbDamping { 0.5f }; // 0.0 to 1.0
     float reverbMix { 0.0f };     // 0.0 to 1.0 (0 = off)
 
+    // --- Beat-grid trimmer (16th note precision) ---
+    float trimStartBeats { 0.0f };  // Start position in beats (0 = beginning)
+    float trimEndBeats { -1.0f };   // End position in beats (-1 = end of audio)
+
+    /** Get trim start in samples, snapped to nearest 16th note. */
+    int getTrimStartSamples() const;
+    /** Get trim end in samples, snapped to nearest 16th note. */
+    int getTrimEndSamples() const;
+    /** Get duration of one 16th note in samples. */
+    float getSixteenthNoteSamples() const;
+    /** Get total beats in the generated audio. */
+    float getTotalBeats() const;
+    /** Apply trim: modifies the audio buffer in place. */
+    void applyTrim();
+
     // --- Save folder (user-configurable, e.g. Ableton's pinned folder) ---
     juce::String exportFolder;  // Empty = ask each time, or set to a folder path
 

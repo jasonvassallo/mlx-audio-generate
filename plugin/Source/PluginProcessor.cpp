@@ -498,6 +498,81 @@ juce::String MLXAudioGenProcessor::getLastError() const
 void MLXAudioGenProcessor::timerCallback() {}
 
 // ---------------------------------------------------------------------------
+// Beat-grid trimmer
+// ---------------------------------------------------------------------------
+
+float MLXAudioGenProcessor::getSixteenthNoteSamples() const
+{
+    float bpm = getEffectiveBpm();
+    if (bpm <= 0.0f) bpm = 120.0f;
+    // 1 beat = 1 quarter note = 4 sixteenth notes
+    // seconds per 16th = 60 / bpm / 4
+    return (60.0f / bpm / 4.0f) * (float) currentSampleRate;
+}
+
+float MLXAudioGenProcessor::getTotalBeats() const
+{
+    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
+        return 0.0f;
+    float bpm = getEffectiveBpm();
+    if (bpm <= 0.0f) bpm = 120.0f;
+    float durationSecs = (float) generatedAudio.getNumSamples() / (float) currentSampleRate;
+    return durationSecs * bpm / 60.0f;
+}
+
+int MLXAudioGenProcessor::getTrimStartSamples() const
+{
+    float sixteenth = getSixteenthNoteSamples();
+    // trimStartBeats is in beats (quarter notes), convert to 16ths (* 4)
+    float sixteenths = trimStartBeats * 4.0f;
+    // Snap to nearest 16th
+    int snapped = (int) std::round (sixteenths);
+    return juce::jmax (0, (int) (snapped * sixteenth));
+}
+
+int MLXAudioGenProcessor::getTrimEndSamples() const
+{
+    if (! hasAudio.load()) return 0;
+    int total = generatedAudio.getNumSamples();
+
+    if (trimEndBeats < 0.0f)
+        return total;
+
+    float sixteenth = getSixteenthNoteSamples();
+    float sixteenths = trimEndBeats * 4.0f;
+    int snapped = (int) std::round (sixteenths);
+    return juce::jmin (total, (int) (snapped * sixteenth));
+}
+
+void MLXAudioGenProcessor::applyTrim()
+{
+    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
+        return;
+
+    int start = getTrimStartSamples();
+    int end = getTrimEndSamples();
+    if (start >= end) return;
+
+    int newLength = end - start;
+    int numChannels = generatedAudio.getNumChannels();
+
+    juce::AudioBuffer<float> trimmed (numChannels, newLength);
+    for (int ch = 0; ch < numChannels; ++ch)
+        trimmed.copyFrom (ch, 0, generatedAudio, ch, start, newLength);
+
+    generatedAudio = std::move (trimmed);
+    playbackPosition.store (0);
+    trimStartBeats = 0.0f;
+    trimEndBeats = -1.0f;
+
+    {
+        juce::ScopedLock lock (stateLock);
+        float durSecs = (float) newLength / (float) currentSampleRate;
+        statusMessage = juce::String ("Trimmed to ") + juce::String (durSecs, 3) + "s";
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Preset / Export (Phase 4e)
 // ---------------------------------------------------------------------------
 

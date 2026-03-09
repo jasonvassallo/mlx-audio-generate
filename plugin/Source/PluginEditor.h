@@ -83,6 +83,12 @@ private:
     juce::Slider reverbSizeSlider;
     juce::Slider reverbMixSlider;
 
+    // --- Beat-grid trimmer ---
+    juce::Slider trimStartSlider;
+    juce::Slider trimEndSlider;
+    juce::TextButton trimButton { "Trim" };
+    juce::Label trimInfoLabel;
+
     // --- Preset / Export (Phase 4e) ---
     juce::TextButton savePresetButton { "Save Preset" };
     juce::TextButton loadPresetButton { "Load Preset" };
