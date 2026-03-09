@@ -5,15 +5,10 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 /**
- * MLX AudioGen plugin editor — DAW-embedded UI.
+ * MLX AudioGen plugin editor — full DAW-integrated UI.
  *
- * Dark theme matching the Web UI aesthetic. Contains:
- *   - Model selector (MusicGen / Stable Audio)
- *   - Text prompt input
- *   - Duration slider
- *   - Model-specific parameter controls
- *   - Generate button with progress bar
- *   - Status display
+ * Phase 4a: Waveform display, loop controls, transport, polished layout
+ * Phase 4b: BPM sync, key signature, MIDI trigger, bar-based duration
  */
 class MLXAudioGenEditor : public juce::AudioProcessorEditor,
                            private juce::Timer
@@ -29,40 +24,67 @@ private:
     void timerCallback() override;
     void updateUIState();
     void onGenerateClicked();
+    void drawWaveform (juce::Graphics& g, juce::Rectangle<int> bounds);
 
-    MLXAudioGenProcessor& audioGenProcessor;
+    MLXAudioGenProcessor& proc;
 
-    // UI Components
+    // --- Model & Prompt ---
     juce::ComboBox modelSelector;
     juce::TextEditor promptInput;
-    juce::Slider durationSlider;
-    juce::Label durationLabel;
 
-    // MusicGen params
+    // --- Duration controls ---
+    juce::ToggleButton barsModeToggle { "Bars" };
+    juce::Slider durationSlider;
+    juce::Label durationLabel { {}, "Duration" };
+    juce::Slider barsSlider;
+    juce::Label barsLabel { {}, "Bars" };
+
+    // --- BPM controls (Phase 4b) ---
+    juce::ToggleButton dawBpmToggle { "Sync DAW" };
+    juce::Slider bpmSlider;
+    juce::Label bpmLabel { {}, "BPM" };
+    juce::Label bpmDisplay;
+
+    // --- Key signature (Phase 4b) ---
+    juce::ComboBox keySelector;
+
+    // --- MusicGen params ---
     juce::Slider temperatureSlider;
     juce::Slider topKSlider;
     juce::Slider guidanceSlider;
 
-    // Stable Audio params
+    // --- Stable Audio params ---
     juce::Slider stepsSlider;
     juce::Slider cfgScaleSlider;
     juce::ComboBox samplerSelector;
 
-    // Controls
+    // --- Seed ---
+    juce::Slider seedSlider;
+    juce::ToggleButton randomSeedToggle { "Random" };
+
+    // --- Transport & generation ---
     juce::TextButton generateButton { "Generate" };
+    juce::TextButton playButton { "Play" };
+    juce::TextButton stopButton { "Stop" };
+    juce::ToggleButton loopToggle { "Loop" };
+    juce::ToggleButton midiTriggerToggle { "MIDI Trigger" };
     juce::Label statusLabel;
     juce::Label errorLabel;
 
-    // Progress bar
+    // --- Waveform ---
+    juce::Rectangle<int> waveformBounds;
     float displayProgress { 0.0f };
 
-    // Dark theme colours
+    // Colours
     static constexpr juce::uint32 bgColour       = 0xFF0A0A0A;
     static constexpr juce::uint32 panelColour     = 0xFF111111;
+    static constexpr juce::uint32 surfaceColour   = 0xFF1A1A1A;
     static constexpr juce::uint32 borderColour    = 0xFF2A2A2A;
     static constexpr juce::uint32 textColour      = 0xFFE8E8E8;
     static constexpr juce::uint32 dimTextColour   = 0xFF888888;
     static constexpr juce::uint32 accentColour    = 0xFFFF6B35;
+    static constexpr juce::uint32 accentDimColour = 0x40FF6B35;
+    static constexpr juce::uint32 successColour   = 0xFF4ADE80;
     static constexpr juce::uint32 errorColourVal  = 0xFFF87171;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MLXAudioGenEditor)

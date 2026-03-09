@@ -9,14 +9,9 @@ class GenerationThread : public juce::Thread
 {
 public:
     GenerationThread (MLXAudioGenProcessor& p)
-        : juce::Thread ("MLX Generation"), processor (p)
-    {
-    }
+        : juce::Thread ("MLX Generation"), processor (p) {}
 
-    void run() override
-    {
-        processor.runGeneration();
-    }
+    void run() override { processor.runGeneration(); }
 
 private:
     MLXAudioGenProcessor& processor;
@@ -43,10 +38,9 @@ void MLXAudioGenProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlo
 {
     currentSampleRate = sampleRate;
 
-    // Auto-launch server on first load (runs in background)
+    // Auto-launch server in background
     if (! serverLauncher.isServerAlive())
     {
-        // Launch on a background thread to avoid blocking the audio thread
         auto* launcher = &serverLauncher;
         auto* self = this;
         juce::Thread::launch ([launcher, self]
@@ -58,46 +52,162 @@ void MLXAudioGenProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlo
     }
 }
 
-void MLXAudioGenProcessor::releaseResources()
-{
-}
+void MLXAudioGenProcessor::releaseResources() {}
 
 // ---------------------------------------------------------------------------
-// Audio processing — plays back generated audio
+// Audio processing + MIDI trigger
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                          juce::MidiBuffer& /*midi*/)
+                                          juce::MidiBuffer& midi)
 {
     buffer.clear();
 
-    if (! hasAudio || generatedAudio.getNumSamples() == 0)
+    // Read DAW BPM
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto pos = playHead->getPosition())
+        {
+            if (auto bpm = pos->getBpm())
+                dawBpm = (float) *bpm;
+        }
+    }
+
+    // MIDI trigger: note-on starts generation
+    if (midiTrigger)
+    {
+        for (const auto metadata : midi)
+        {
+            auto msg = metadata.getMessage();
+            if (msg.isNoteOn() && ! generating.load())
+            {
+                // Trigger on message thread to avoid thread issues
+                juce::MessageManager::callAsync ([this] { triggerGeneration(); });
+                break;
+            }
+        }
+    }
+
+    // Playback
+    if (! playing.load() || ! hasAudio.load() || generatedAudio.getNumSamples() == 0)
         return;
 
     const int numChannels = juce::jmin (buffer.getNumChannels(),
                                          generatedAudio.getNumChannels());
     const int numSamples = buffer.getNumSamples();
     const int totalSamples = generatedAudio.getNumSamples();
+    int pos = playbackPosition.load();
 
     for (int ch = 0; ch < numChannels; ++ch)
     {
-        int remaining = totalSamples - playbackPosition;
-        int toCopy = juce::jmin (numSamples, remaining);
+        int writePos = 0;
+        int readPos = pos;
 
-        if (toCopy > 0)
+        while (writePos < numSamples)
         {
-            buffer.copyFrom (ch, 0,
-                             generatedAudio, ch, playbackPosition, toCopy);
+            int remaining = totalSamples - readPos;
+            int toCopy = juce::jmin (numSamples - writePos, remaining);
+
+            if (toCopy > 0)
+                buffer.copyFrom (ch, writePos, generatedAudio, ch, readPos, toCopy);
+
+            writePos += toCopy;
+            readPos += toCopy;
+
+            if (readPos >= totalSamples)
+            {
+                if (looping)
+                    readPos = 0;
+                else
+                {
+                    playing.store (false);
+                    break;
+                }
+            }
         }
     }
 
-    playbackPosition += numSamples;
-    if (playbackPosition >= totalSamples)
-        playbackPosition = 0; // Loop
+    pos += numSamples;
+    if (pos >= totalSamples)
+        pos = looping ? pos % totalSamples : totalSamples;
+    playbackPosition.store (pos);
 }
 
 // ---------------------------------------------------------------------------
-// Generation control
+// Playback control
+// ---------------------------------------------------------------------------
+
+void MLXAudioGenProcessor::togglePlayback()
+{
+    if (! hasAudio.load())
+        return;
+
+    if (playing.load())
+    {
+        playing.store (false);
+    }
+    else
+    {
+        if (playbackPosition.load() >= generatedAudio.getNumSamples())
+            playbackPosition.store (0);
+        playing.store (true);
+    }
+}
+
+void MLXAudioGenProcessor::stopPlayback()
+{
+    playing.store (false);
+    playbackPosition.store (0);
+}
+
+float MLXAudioGenProcessor::getPlaybackProgress() const
+{
+    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
+        return 0.0f;
+    return (float) playbackPosition.load() / (float) generatedAudio.getNumSamples();
+}
+
+// ---------------------------------------------------------------------------
+// DAW integration
+// ---------------------------------------------------------------------------
+
+float MLXAudioGenProcessor::getEffectiveBpm() const
+{
+    return useDawBpm ? dawBpm : manualBpm;
+}
+
+float MLXAudioGenProcessor::getEffectiveSeconds() const
+{
+    if (! useBarsMode)
+        return seconds;
+
+    // bars × beats_per_bar × seconds_per_beat
+    float bpm = getEffectiveBpm();
+    if (bpm <= 0.0f) bpm = 120.0f;
+    return (float) bars * 4.0f * (60.0f / bpm);
+}
+
+juce::String MLXAudioGenProcessor::buildFullPrompt() const
+{
+    auto fullPrompt = prompt;
+
+    // Append key signature if set
+    if (keySignature.isNotEmpty())
+        fullPrompt += " in " + keySignature;
+
+    // Append BPM hint for rhythmic content
+    if (useBarsMode || useDawBpm)
+    {
+        float bpm = getEffectiveBpm();
+        if (bpm > 0.0f)
+            fullPrompt += ", " + juce::String ((int) bpm) + " BPM";
+    }
+
+    return fullPrompt;
+}
+
+// ---------------------------------------------------------------------------
+// Generation
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenProcessor::triggerGeneration()
@@ -112,7 +222,6 @@ void MLXAudioGenProcessor::triggerGeneration()
         return;
     }
 
-    // Ensure server is running before generating
     if (! serverLauncher.isServerAlive())
     {
         juce::ScopedLock lock (stateLock);
@@ -124,6 +233,7 @@ void MLXAudioGenProcessor::triggerGeneration()
 
     generating.store (true);
     progress.store (0.0f);
+    playing.store (false);
 
     {
         juce::ScopedLock lock (stateLock);
@@ -131,18 +241,16 @@ void MLXAudioGenProcessor::triggerGeneration()
         lastError = {};
     }
 
-    // Launch background thread
     generationThread = std::make_unique<GenerationThread> (*this);
     generationThread->startThread();
 }
 
 void MLXAudioGenProcessor::runGeneration()
 {
-    // Build JSON request body
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("model", modelType);
-    obj->setProperty ("prompt", prompt);
-    obj->setProperty ("seconds", (double) seconds);
+    obj->setProperty ("prompt", buildFullPrompt());
+    obj->setProperty ("seconds", (double) getEffectiveSeconds());
 
     if (modelType == "musicgen")
     {
@@ -165,13 +273,11 @@ void MLXAudioGenProcessor::runGeneration()
     juce::var json (obj);
     auto jsonBody = juce::JSON::toString (json);
 
-    // Submit to server
     auto jobId = httpClient.submitGeneration (jsonBody);
-
     if (jobId.isEmpty())
     {
         juce::ScopedLock lock (stateLock);
-        lastError = "Failed to connect to server. Is mlx-audiogen-app running?";
+        lastError = "Failed to connect to server";
         statusMessage = "Error";
         generating.store (false);
         return;
@@ -182,8 +288,8 @@ void MLXAudioGenProcessor::runGeneration()
         statusMessage = "Generating...";
     }
 
-    // Poll until done (up to 10 minutes)
-    const int maxPolls = 1200; // 10 min at 500ms interval
+    // Poll until done
+    const int maxPolls = 1200;
     for (int i = 0; i < maxPolls; ++i)
     {
         if (juce::Thread::currentThreadShouldExit())
@@ -207,7 +313,6 @@ void MLXAudioGenProcessor::runGeneration()
 
             if (status == "done")
             {
-                // Download audio
                 {
                     juce::ScopedLock lock (stateLock);
                     statusMessage = "Downloading audio...";
@@ -216,7 +321,6 @@ void MLXAudioGenProcessor::runGeneration()
                 auto wavData = httpClient.downloadAudio (jobId);
                 if (wavData.getSize() > 0)
                 {
-                    // Load WAV into AudioBuffer
                     auto inputStream = std::make_unique<juce::MemoryInputStream> (
                         wavData, false);
 
@@ -231,18 +335,22 @@ void MLXAudioGenProcessor::runGeneration()
                             (int) reader->lengthInSamples);
                         reader->read (&generatedAudio, 0,
                                       (int) reader->lengthInSamples, 0, true, true);
-                        playbackPosition = 0;
-                        hasAudio = true;
+                        playbackPosition.store (0);
+                        hasAudio.store (true);
+                        playing.store (true); // Auto-play
 
+                        float durSecs = (float) reader->lengthInSamples
+                                        / (float) reader->sampleRate;
                         {
                             juce::ScopedLock lock (stateLock);
-                            statusMessage = "Ready — audio loaded";
+                            statusMessage = juce::String ("Ready — ")
+                                            + juce::String (durSecs, 1) + "s loaded";
                         }
                     }
                     else
                     {
                         juce::ScopedLock lock (stateLock);
-                        lastError = "Failed to decode WAV data";
+                        lastError = "Failed to decode WAV";
                         statusMessage = "Error";
                     }
                 }
@@ -267,7 +375,6 @@ void MLXAudioGenProcessor::runGeneration()
                 return;
             }
 
-            // Still running — update status
             {
                 juce::ScopedLock lock (stateLock);
                 statusMessage = juce::String ("Generating... ")
@@ -276,7 +383,6 @@ void MLXAudioGenProcessor::runGeneration()
         }
     }
 
-    // Timeout
     {
         juce::ScopedLock lock (stateLock);
         lastError = "Generation timed out (10 minutes)";
@@ -301,17 +407,10 @@ juce::String MLXAudioGenProcessor::getLastError() const
     return lastError;
 }
 
-// ---------------------------------------------------------------------------
-// Timer — triggers UI repaints during generation
-// ---------------------------------------------------------------------------
-
-void MLXAudioGenProcessor::timerCallback()
-{
-    // Editor polls this — nothing needed here
-}
+void MLXAudioGenProcessor::timerCallback() {}
 
 // ---------------------------------------------------------------------------
-// State save/restore (DAW session persistence)
+// State persistence
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -329,6 +428,13 @@ void MLXAudioGenProcessor::getStateInformation (juce::MemoryBlock& destData)
     obj->setProperty ("sampler", sampler);
     obj->setProperty ("seed", seed);
     obj->setProperty ("serverUrl", httpClient.getBaseUrl());
+    obj->setProperty ("useDawBpm", useDawBpm);
+    obj->setProperty ("manualBpm", (double) manualBpm);
+    obj->setProperty ("bars", bars);
+    obj->setProperty ("useBarsMode", useBarsMode);
+    obj->setProperty ("keySignature", keySignature);
+    obj->setProperty ("midiTrigger", midiTrigger);
+    obj->setProperty ("looping", looping);
 
     juce::var json (obj);
     auto text = juce::JSON::toString (json);
@@ -363,6 +469,13 @@ void MLXAudioGenProcessor::setStateInformation (const void* data, int sizeInByte
         cfgScale = (float) obj->getProperty ("cfgScale");
         sampler = obj->getProperty ("sampler").toString();
         seed = (int) obj->getProperty ("seed");
+        useDawBpm = (bool) obj->getProperty ("useDawBpm");
+        manualBpm = (float) obj->getProperty ("manualBpm");
+        bars = (int) obj->getProperty ("bars");
+        useBarsMode = (bool) obj->getProperty ("useBarsMode");
+        keySignature = obj->getProperty ("keySignature").toString();
+        midiTrigger = (bool) obj->getProperty ("midiTrigger");
+        looping = (bool) obj->getProperty ("looping");
 
         auto serverUrl = obj->getProperty ("serverUrl").toString();
         if (serverUrl.isNotEmpty())

@@ -8,15 +8,9 @@
 /**
  * MLX AudioGen plugin processor.
  *
- * This is a synthesizer plugin that generates audio via the mlx-audiogen
- * HTTP server. Generation happens asynchronously on a background thread;
- * completed audio is loaded into a buffer and played back through the
- * DAW's audio bus.
- *
- * Architecture:
- *   User clicks Generate → background thread POSTs to server →
- *   polls /api/status → downloads WAV → loads into AudioBuffer →
- *   processBlock() reads from buffer → DAW output
+ * Synthesizer plugin that generates audio via the mlx-audiogen HTTP server.
+ * Supports BPM sync with DAW, key signature awareness, MIDI trigger,
+ * and looped playback with bar-aligned trim.
  */
 class MLXAudioGenProcessor : public juce::AudioProcessor,
                               private juce::Timer
@@ -48,21 +42,22 @@ public:
     void setStateInformation (const void*, int) override;
 
     // --- Generation control ---
-
-    /** Trigger generation with current parameters. Thread-safe. */
     void triggerGeneration();
-
-    /** Is a generation currently in progress? */
     bool isGenerating() const { return generating.load(); }
-
-    /** Get current progress (0.0 to 1.0). */
     float getProgress() const { return progress.load(); }
-
-    /** Get status message for UI display. */
     juce::String getStatusMessage() const;
-
-    /** Get last error message, empty if no error. */
     juce::String getLastError() const;
+    void runGeneration();
+
+    // --- Playback control ---
+    void togglePlayback();
+    void stopPlayback();
+    bool isPlaying() const { return playing.load(); }
+    bool hasAudioLoaded() const { return hasAudio.load(); }
+    float getPlaybackProgress() const;
+
+    // --- Audio buffer access (for waveform drawing) ---
+    const juce::AudioBuffer<float>& getGeneratedAudio() const { return generatedAudio; }
 
     // --- Parameters ---
     juce::String prompt;
@@ -75,31 +70,47 @@ public:
     int steps { 8 };
     float cfgScale { 6.0f };
     juce::String sampler { "euler" };
-    int seed { -1 }; // -1 = random
+    int seed { -1 };
+
+    // --- DAW integration (Phase 4b) ---
+    bool useDawBpm { true };        // Auto-read BPM from DAW
+    float manualBpm { 120.0f };     // Manual BPM when not synced
+    int bars { 4 };                 // Duration in bars (when using bar mode)
+    bool useBarsMode { false };     // true = use bars+BPM, false = use seconds
+    juce::String keySignature;      // e.g. "A minor", "C major" — appended to prompt
+    bool midiTrigger { false };     // Generate on MIDI note-on
+    bool looping { true };          // Loop playback
+
+    /** Get effective BPM (from DAW or manual setting). */
+    float getEffectiveBpm() const;
+
+    /** Get effective duration in seconds (accounting for bar mode). */
+    float getEffectiveSeconds() const;
 
     HttpClient httpClient;
     ServerLauncher serverLauncher;
 
-    /** Run the generation loop — called from background thread. */
-    void runGeneration();
-
 private:
     void timerCallback() override;
 
+    /** Build the full prompt including key signature suffix. */
+    juce::String buildFullPrompt() const;
+
     // Playback state
     juce::AudioBuffer<float> generatedAudio;
-    int playbackPosition { 0 };
-    bool hasAudio { false };
+    std::atomic<int> playbackPosition { 0 };
+    std::atomic<bool> hasAudio { false };
+    std::atomic<bool> playing { false };
     double currentSampleRate { 44100.0 };
+    float dawBpm { 120.0f };
 
-    // Generation state (thread-safe)
+    // Generation state
     std::atomic<bool> generating { false };
     std::atomic<float> progress { 0.0f };
     juce::String statusMessage;
     juce::String lastError;
     juce::CriticalSection stateLock;
 
-    // Background thread
     std::unique_ptr<juce::Thread> generationThread;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MLXAudioGenProcessor)
