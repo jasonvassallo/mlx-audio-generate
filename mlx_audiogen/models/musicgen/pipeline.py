@@ -96,6 +96,16 @@ class MusicGenPipeline:
             )
 
         weights_path = Path(weights_dir)
+        if not weights_path.is_dir():
+            raise FileNotFoundError(
+                f"Weights directory not found: {weights_path}. "
+                "Run mlx-audiogen-convert first."
+            )
+
+        # Verify required files exist before attempting to load
+        _require_file(weights_path / "config.json")
+        _require_file(weights_path / "t5.safetensors")
+        _require_file(weights_path / "decoder.safetensors")
 
         # Load configs
         config = _load_config(weights_path)
@@ -266,6 +276,15 @@ class MusicGenPipeline:
 
 # Graph materialisation helper (avoids security hook pattern matching)
 _force_compute = getattr(mx, "ev" + "al")
+
+
+def _require_file(path: Path) -> None:
+    """Raise FileNotFoundError with a helpful message if a required file is missing."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Required file not found: {path.name} in {path.parent}. "
+            "Run mlx-audiogen-convert to generate this file."
+        )
 
 
 def _load_config(weights_path: Path) -> MusicGenConfig:

@@ -236,6 +236,13 @@ The HTTP server (`server/app.py`) validates all request fields via Pydantic and 
 - **No filesystem path leaks**: The `/api/models` endpoint returns model name and type only — never the `weights_dir` filesystem path
 - **Job limit**: Max 100 concurrent jobs with automatic cleanup of completed jobs older than 5 minutes
 
+### Pipeline File Validation
+Both pipelines validate required files upfront in `from_pretrained()` before attempting to load:
+- MusicGen requires: `config.json`, `t5.safetensors`, `decoder.safetensors`
+- Stable Audio requires: `config.json`, `vae.safetensors`, `dit.safetensors`, `t5.safetensors`, `conditioners.safetensors`
+- Missing files raise `FileNotFoundError` with a message pointing to `mlx-audiogen-convert`
+- Invalid/non-directory `weights_dir` raises `FileNotFoundError` before any loading begins
+
 ### Exception Handling
 Use specific exception types (`OSError`, `ValueError`, `KeyError`) instead of bare `except Exception`. This prevents silently swallowing real bugs while still handling expected failures like missing files or network errors.
 

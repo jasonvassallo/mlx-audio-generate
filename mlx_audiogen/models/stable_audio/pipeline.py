@@ -68,6 +68,26 @@ class StableAudioPipeline:
             )
 
         weights_path = Path(weights_dir)
+        if not weights_path.is_dir():
+            raise FileNotFoundError(
+                f"Weights directory not found: {weights_path}. "
+                "Run mlx-audiogen-convert first."
+            )
+
+        # Verify required files exist before attempting to load
+        for required in [
+            "config.json",
+            "vae.safetensors",
+            "dit.safetensors",
+            "t5.safetensors",
+            "conditioners.safetensors",
+        ]:
+            path = weights_path / required
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"Required file not found: {required} in {weights_path}. "
+                    "Run mlx-audiogen-convert to generate this file."
+                )
 
         # Load config
         config = _load_config(weights_path)
