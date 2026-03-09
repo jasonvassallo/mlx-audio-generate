@@ -42,6 +42,20 @@ MLXAudioGenProcessor::~MLXAudioGenProcessor()
 void MLXAudioGenProcessor::prepareToPlay (double sampleRate, int /*samplesPerBlock*/)
 {
     currentSampleRate = sampleRate;
+
+    // Auto-launch server on first load (runs in background)
+    if (! serverLauncher.isServerAlive())
+    {
+        // Launch on a background thread to avoid blocking the audio thread
+        auto* launcher = &serverLauncher;
+        auto* self = this;
+        juce::Thread::launch ([launcher, self]
+        {
+            launcher->ensureServerRunning();
+            juce::ScopedLock lock (self->stateLock);
+            self->statusMessage = launcher->getStatus();
+        });
+    }
 }
 
 void MLXAudioGenProcessor::releaseResources()
@@ -95,6 +109,16 @@ void MLXAudioGenProcessor::triggerGeneration()
     {
         juce::ScopedLock lock (stateLock);
         lastError = "Prompt is required";
+        return;
+    }
+
+    // Ensure server is running before generating
+    if (! serverLauncher.isServerAlive())
+    {
+        juce::ScopedLock lock (stateLock);
+        lastError = serverLauncher.getStatus();
+        if (lastError.isEmpty())
+            lastError = "Server not running. Waiting for auto-start...";
         return;
     }
 

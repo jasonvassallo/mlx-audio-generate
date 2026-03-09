@@ -26,6 +26,7 @@ target_sources(MLXAudioGen
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/HttpClient.cpp
+        Source/ServerLauncher.cpp
 )
 
 target_compile_definitions(MLXAudioGen

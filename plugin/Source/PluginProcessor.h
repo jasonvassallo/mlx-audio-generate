@@ -1,6 +1,7 @@
 #pragma once
 
 #include "HttpClient.h"
+#include "ServerLauncher.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -77,6 +78,7 @@ public:
     int seed { -1 }; // -1 = random
 
     HttpClient httpClient;
+    ServerLauncher serverLauncher;
 
     /** Run the generation loop — called from background thread. */
     void runGeneration();
