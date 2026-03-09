@@ -9,9 +9,10 @@
 /**
  * MLX AudioGen plugin processor.
  *
- * Synthesizer plugin that generates audio via the mlx-audiogen HTTP server.
- * Supports BPM sync with DAW, key signature awareness, MIDI trigger,
- * and looped playback with bar-aligned trim.
+ * All generation parameters are exposed via AudioProcessorValueTreeState
+ * (APVTS) for Push 2 compatibility, DAW automation, and MIDI controller
+ * mapping. Push 2 automatically discovers parameters and maps them to
+ * its knobs and display.
  */
 class MLXAudioGenProcessor : public juce::AudioProcessor,
                               private juce::Timer
@@ -42,6 +43,10 @@ public:
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void*, int) override;
 
+    // --- APVTS: exposes parameters to DAW, Push 2, MIDI controllers ---
+    juce::AudioProcessorValueTreeState apvts;
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
     // --- Generation control ---
     void triggerGeneration();
     bool isGenerating() const { return generating.load(); }
@@ -50,96 +55,38 @@ public:
     juce::String getLastError() const;
     void runGeneration();
 
-    // --- Playback control ---
+    // --- Playback ---
     void togglePlayback();
     void stopPlayback();
     bool isPlaying() const { return playing.load(); }
     bool hasAudioLoaded() const { return hasAudio.load(); }
     float getPlaybackProgress() const;
-
-    // --- Audio buffer access (for waveform drawing) ---
     const juce::AudioBuffer<float>& getGeneratedAudio() const { return generatedAudio; }
 
-    // --- Instance identity (for multi-instance) ---
+    // --- Non-automatable state (not in APVTS) ---
     juce::String instanceName { "MLX AudioGen" };
-
-    // --- Parameters ---
     juce::String prompt;
     juce::String negativePrompt;
-    juce::String modelType { "musicgen" };
-    float seconds { 5.0f };
-    float temperature { 1.0f };
-    int topK { 250 };
-    float guidanceCoef { 3.0f };
-    int steps { 8 };
-    float cfgScale { 6.0f };
-    juce::String sampler { "euler" };
-    int seed { -1 };
+    juce::String exportFolder;
+    juce::String keySignature;
 
-    // --- DAW integration (Phase 4b) ---
-    bool useDawBpm { true };        // Auto-read BPM from DAW
-    float manualBpm { 120.0f };     // Manual BPM when not synced
-    int bars { 4 };                 // Duration in bars (when using bar mode)
-    bool useBarsMode { false };     // true = use bars+BPM, false = use seconds
-    juce::String keySignature;      // e.g. "A minor", "C major" — appended to prompt
-    bool midiTrigger { false };     // Generate on MIDI note-on
-    bool looping { true };          // Loop playback
+    // --- Beat-grid trimmer ---
+    float trimStartBeats { 0.0f };
+    float trimEndBeats { -1.0f };
+    int getTrimStartSamples() const;
+    int getTrimEndSamples() const;
+    float getSixteenthNoteSamples() const;
+    float getTotalBeats() const;
+    void applyTrim();
 
     /** Get effective BPM (from DAW or manual setting). */
     float getEffectiveBpm() const;
-
     /** Get effective duration in seconds (accounting for bar mode). */
     float getEffectiveSeconds() const;
 
-    // --- Effects parameters ---
-    bool fxEnabled { false };
-
-    // EQ (3-band: low shelf, mid peak, high shelf)
-    float eqLowGain { 0.0f };     // dB (-12 to +12)
-    float eqMidGain { 0.0f };     // dB (-12 to +12)
-    float eqMidFreq { 1000.0f };  // Hz (200-8000)
-    float eqHighGain { 0.0f };    // dB (-12 to +12)
-
-    // Compressor
-    float compThreshold { 0.0f };  // dB (-60 to 0)
-    float compRatio { 1.0f };      // 1:1 to 20:1
-    float compAttack { 10.0f };    // ms
-    float compRelease { 100.0f };  // ms
-
-    // Delay
-    float delayTime { 0.0f };     // ms (0 = off, up to 1000)
-    float delayFeedback { 0.3f }; // 0.0 to 0.95
-    float delayMix { 0.0f };      // 0.0 to 1.0
-
-    // Reverb
-    float reverbSize { 0.5f };    // 0.0 to 1.0
-    float reverbDamping { 0.5f }; // 0.0 to 1.0
-    float reverbMix { 0.0f };     // 0.0 to 1.0 (0 = off)
-
-    // --- Beat-grid trimmer (16th note precision) ---
-    float trimStartBeats { 0.0f };  // Start position in beats (0 = beginning)
-    float trimEndBeats { -1.0f };   // End position in beats (-1 = end of audio)
-
-    /** Get trim start in samples, snapped to nearest 16th note. */
-    int getTrimStartSamples() const;
-    /** Get trim end in samples, snapped to nearest 16th note. */
-    int getTrimEndSamples() const;
-    /** Get duration of one 16th note in samples. */
-    float getSixteenthNoteSamples() const;
-    /** Get total beats in the generated audio. */
-    float getTotalBeats() const;
-    /** Apply trim: modifies the audio buffer in place. */
-    void applyTrim();
-
-    // --- Save folder (user-configurable, e.g. Ableton's pinned folder) ---
-    juce::String exportFolder;  // Empty = ask each time, or set to a folder path
-
-    // --- Preset / Export (Phase 4e) ---
-    /** Save all parameters as a JSON preset file. */
+    // --- Preset / Export ---
     void savePreset (const juce::File& file);
-    /** Load parameters from a JSON preset file. */
     void loadPreset (const juce::File& file);
-    /** Export the generated audio as a WAV file. */
     void exportAudio (const juce::File& file);
 
     HttpClient httpClient;
@@ -147,9 +94,10 @@ public:
 
 private:
     void timerCallback() override;
-
-    /** Build the full prompt including key signature suffix. */
     juce::String buildFullPrompt() const;
+
+    void updateEffectsParameters();
+    void applyEffects (juce::AudioBuffer<float>& buffer);
 
     // Playback state
     juce::AudioBuffer<float> generatedAudio;
@@ -168,20 +116,9 @@ private:
 
     std::unique_ptr<juce::Thread> generationThread;
 
-    // DSP effects chain
-    juce::dsp::ProcessorChain<
-        juce::dsp::IIR::Filter<float>,    // Low shelf EQ
-        juce::dsp::IIR::Filter<float>,    // Mid peak EQ
-        juce::dsp::IIR::Filter<float>,    // High shelf EQ
-        juce::dsp::Compressor<float>,     // Compressor
-        juce::dsp::DelayLine<float>,      // Delay
-        juce::dsp::Reverb                 // Reverb
-    > fxChain;
-    juce::dsp::DelayLine<float> delayLine { 48000 }; // 1 sec max
+    // DSP
+    juce::dsp::DelayLine<float> delayLine { 48000 };
     juce::dsp::Reverb reverb;
-
-    void updateEffectsParameters();
-    void applyEffects (juce::AudioBuffer<float>& buffer);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MLXAudioGenProcessor)
 };

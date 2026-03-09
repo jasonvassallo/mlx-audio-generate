@@ -4,12 +4,6 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
-/**
- * MLX AudioGen plugin editor — full DAW-integrated UI.
- *
- * Phase 4a: Waveform display, loop controls, transport, polished layout
- * Phase 4b: BPM sync, key signature, MIDI trigger, bar-based duration
- */
 class MLXAudioGenEditor : public juce::AudioProcessorEditor,
                            private juce::Timer
 {
@@ -28,77 +22,79 @@ private:
 
     MLXAudioGenProcessor& proc;
 
-    // --- Instance name ---
+    // Instance name
     juce::TextEditor instanceNameInput;
 
-    // --- Model & Prompt ---
+    // Model & Prompt
     juce::ComboBox modelSelector;
     juce::TextEditor promptInput;
 
-    // --- Duration controls ---
+    // Duration
     juce::ToggleButton barsModeToggle { "Bars" };
-    juce::Slider durationSlider;
-    juce::Label durationLabel { {}, "Duration" };
-    juce::Slider barsSlider;
-    juce::Label barsLabel { {}, "Bars" };
+    juce::Slider durationSlider, barsSlider;
+    juce::Label durationLabel { {}, "Dur" }, barsLabel { {}, "Bars" };
 
-    // --- BPM controls (Phase 4b) ---
+    // BPM
     juce::ToggleButton dawBpmToggle { "Sync DAW" };
     juce::Slider bpmSlider;
-    juce::Label bpmLabel { {}, "BPM" };
-    juce::Label bpmDisplay;
+    juce::Label bpmLabel { {}, "BPM" }, bpmDisplay;
 
-    // --- Key signature (Phase 4b) ---
+    // Key
     juce::ComboBox keySelector;
 
-    // --- MusicGen params ---
-    juce::Slider temperatureSlider;
-    juce::Slider topKSlider;
-    juce::Slider guidanceSlider;
-
-    // --- Stable Audio params ---
-    juce::Slider stepsSlider;
-    juce::Slider cfgScaleSlider;
+    // MusicGen
+    juce::Slider temperatureSlider, topKSlider, guidanceSlider;
+    // Stable Audio
+    juce::Slider stepsSlider, cfgScaleSlider;
     juce::ComboBox samplerSelector;
 
-    // --- Seed ---
+    // Seed
     juce::Slider seedSlider;
-    juce::ToggleButton randomSeedToggle { "Random" };
 
-    // --- Transport & generation ---
+    // Transport
     juce::TextButton generateButton { "Generate" };
-    juce::TextButton playButton { "Play" };
-    juce::TextButton stopButton { "Stop" };
+    juce::TextButton playButton { "Play" }, stopButton { "Stop" };
     juce::ToggleButton loopToggle { "Loop" };
     juce::ToggleButton midiTriggerToggle { "MIDI Trigger" };
-    juce::Label statusLabel;
-    juce::Label errorLabel;
 
-    // --- Effects (Phase 4d) ---
+    // Effects
     juce::ToggleButton fxToggle { "FX" };
-    juce::Slider compThresholdSlider;
-    juce::Slider compRatioSlider;
-    juce::Slider delayTimeSlider;
-    juce::Slider delayMixSlider;
-    juce::Slider reverbSizeSlider;
-    juce::Slider reverbMixSlider;
+    juce::Slider compThresholdSlider, compRatioSlider;
+    juce::Slider delayTimeSlider, delayMixSlider;
+    juce::Slider reverbSizeSlider, reverbMixSlider;
 
-    // --- Beat-grid trimmer ---
-    juce::Slider trimStartSlider;
-    juce::Slider trimEndSlider;
+    // Trim
+    juce::Slider trimStartSlider, trimEndSlider;
     juce::TextButton trimButton { "Trim" };
     juce::Label trimInfoLabel;
 
-    // --- Preset / Export (Phase 4e) ---
-    juce::TextButton savePresetButton { "Save Preset" };
-    juce::TextButton loadPresetButton { "Load Preset" };
-    juce::TextButton exportAudioButton { "Export WAV" };
-    juce::TextButton setFolderButton { "Set Folder" };
+    // Preset / Export
+    juce::TextButton savePresetButton { "Save" };
+    juce::TextButton loadPresetButton { "Load" };
+    juce::TextButton exportAudioButton { "Export" };
+    juce::TextButton setFolderButton { "Folder" };
     juce::Label folderLabel;
 
-    // --- Waveform ---
+    juce::Label statusLabel, errorLabel;
     juce::Rectangle<int> waveformBounds;
     float displayProgress { 0.0f };
+
+    // APVTS parameter attachments — keep Push 2 / automation in sync
+    using SliderAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboAttach  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+
+    std::unique_ptr<ComboAttach>  modelAttach;
+    std::unique_ptr<SliderAttach> durationAttach, barsAttach, bpmAttach;
+    std::unique_ptr<ButtonAttach> barsModeAttach, dawBpmAttach;
+    std::unique_ptr<SliderAttach> tempAttach, topKAttach, guidanceAttach;
+    std::unique_ptr<SliderAttach> stepsAttach, cfgAttach;
+    std::unique_ptr<ComboAttach>  samplerAttach;
+    std::unique_ptr<SliderAttach> seedAttach;
+    std::unique_ptr<ButtonAttach> loopAttach, midiAttach, fxAttach;
+    std::unique_ptr<SliderAttach> compTAttach, compRAttach;
+    std::unique_ptr<SliderAttach> delayTAttach, delayMxAttach;
+    std::unique_ptr<SliderAttach> revSizeAttach, revMixAttach;
 
     // Colours
     static constexpr juce::uint32 bgColour       = 0xFF0A0A0A;
@@ -108,7 +104,6 @@ private:
     static constexpr juce::uint32 textColour      = 0xFFE8E8E8;
     static constexpr juce::uint32 dimTextColour   = 0xFF888888;
     static constexpr juce::uint32 accentColour    = 0xFFFF6B35;
-    static constexpr juce::uint32 accentDimColour = 0x40FF6B35;
     static constexpr juce::uint32 successColour   = 0xFF4ADE80;
     static constexpr juce::uint32 errorColourVal  = 0xFFF87171;
 

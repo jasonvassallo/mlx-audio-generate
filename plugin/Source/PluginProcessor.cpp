@@ -2,6 +2,119 @@
 #include "PluginEditor.h"
 
 // ---------------------------------------------------------------------------
+// APVTS Parameter Layout — exposed to Push 2, automation, MIDI mapping
+// ---------------------------------------------------------------------------
+
+juce::AudioProcessorValueTreeState::ParameterLayout
+MLXAudioGenProcessor::createParameterLayout()
+{
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    // Model: 0 = musicgen, 1 = stable_audio
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID ("model", 1), "Model",
+        juce::StringArray { "MusicGen", "Stable Audio" }, 0));
+
+    // Duration
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("seconds", 1), "Duration",
+        juce::NormalisableRange<float> (0.5f, 60.0f, 0.5f), 5.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID ("bars", 1), "Bars", 1, 32, 4));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID ("barsMode", 1), "Bars Mode", false));
+
+    // BPM
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("manualBpm", 1), "Manual BPM",
+        juce::NormalisableRange<float> (40.0f, 240.0f, 1.0f), 120.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID ("dawBpm", 1), "DAW BPM Sync", true));
+
+    // MusicGen params
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("temperature", 1), "Temperature",
+        juce::NormalisableRange<float> (0.1f, 2.0f, 0.05f), 1.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID ("topK", 1), "Top K", 1, 500, 250));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("guidance", 1), "Guidance",
+        juce::NormalisableRange<float> (0.0f, 10.0f, 0.1f), 3.0f));
+
+    // Stable Audio params
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID ("steps", 1), "Steps", 1, 100, 8));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("cfgScale", 1), "CFG Scale",
+        juce::NormalisableRange<float> (0.0f, 15.0f, 0.1f), 6.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID ("sampler", 1), "Sampler",
+        juce::StringArray { "Euler", "RK4" }, 0));
+
+    // Seed
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID ("seed", 1), "Seed", -1, 99999, -1));
+
+    // Playback
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID ("loop", 1), "Loop", true));
+
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID ("midiTrigger", 1), "MIDI Trigger", false));
+
+    // Effects
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID ("fxEnabled", 1), "FX Enabled", false));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("compThreshold", 1), "Comp Threshold",
+        juce::NormalisableRange<float> (-60.0f, 0.0f, 1.0f), 0.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("compRatio", 1), "Comp Ratio",
+        juce::NormalisableRange<float> (1.0f, 20.0f, 0.1f), 1.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("delayTime", 1), "Delay Time",
+        juce::NormalisableRange<float> (0.0f, 1000.0f, 1.0f), 0.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("delayMix", 1), "Delay Mix",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("delayFeedback", 1), "Delay Feedback",
+        juce::NormalisableRange<float> (0.0f, 0.95f, 0.01f), 0.3f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("reverbSize", 1), "Reverb Size",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("reverbDamping", 1), "Reverb Damping",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f));
+
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("reverbMix", 1), "Reverb Mix",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
+
+    return { params.begin(), params.end() };
+}
+
+// Helper to read APVTS params
+#define PARAM_FLOAT(id)  apvts.getRawParameterValue(id)->load()
+#define PARAM_INT(id)    (int) apvts.getRawParameterValue(id)->load()
+#define PARAM_BOOL(id)   (apvts.getRawParameterValue(id)->load() >= 0.5f)
+#define PARAM_CHOICE(id) (int) apvts.getRawParameterValue(id)->load()
+
+// ---------------------------------------------------------------------------
 // Background generation thread
 // ---------------------------------------------------------------------------
 
@@ -10,20 +123,19 @@ class GenerationThread : public juce::Thread
 public:
     GenerationThread (MLXAudioGenProcessor& p)
         : juce::Thread ("MLX Generation"), processor (p) {}
-
     void run() override { processor.runGeneration(); }
-
 private:
     MLXAudioGenProcessor& processor;
 };
 
 // ---------------------------------------------------------------------------
-// Processor lifecycle
+// Lifecycle
 // ---------------------------------------------------------------------------
 
 MLXAudioGenProcessor::MLXAudioGenProcessor()
     : AudioProcessor (BusesProperties()
-                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "MLXAudioGen", createParameterLayout())
 {
 }
 
@@ -38,23 +150,19 @@ void MLXAudioGenProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 {
     currentSampleRate = sampleRate;
 
-    // Prepare DSP effects
     juce::dsp::ProcessSpec spec;
     spec.sampleRate = sampleRate;
     spec.maximumBlockSize = (juce::uint32) samplesPerBlock;
     spec.numChannels = 2;
-
     delayLine.prepare (spec);
-    delayLine.setMaximumDelayInSamples ((int) sampleRate); // 1 sec max
+    delayLine.setMaximumDelayInSamples ((int) sampleRate);
     reverb.prepare (spec);
 
-    // Auto-launch server in background
     if (! serverLauncher.isServerAlive())
     {
         auto* launcher = &serverLauncher;
         auto* self = this;
-        juce::Thread::launch ([launcher, self]
-        {
+        juce::Thread::launch ([launcher, self] {
             launcher->ensureServerRunning();
             juce::ScopedLock lock (self->stateLock);
             self->statusMessage = launcher->getStatus();
@@ -65,7 +173,7 @@ void MLXAudioGenProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 void MLXAudioGenProcessor::releaseResources() {}
 
 // ---------------------------------------------------------------------------
-// Audio processing + MIDI trigger
+// Audio processing
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenProcessor::processBlock (juce::AudioBuffer<float>& buffer,
@@ -73,66 +181,49 @@ void MLXAudioGenProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     buffer.clear();
 
-    // Read DAW BPM
     if (auto* playHead = getPlayHead())
     {
         if (auto pos = playHead->getPosition())
-        {
             if (auto bpm = pos->getBpm())
                 dawBpm = (float) *bpm;
-        }
     }
 
-    // MIDI trigger: note-on starts generation
-    if (midiTrigger)
+    // MIDI trigger
+    if (PARAM_BOOL ("midiTrigger"))
     {
         for (const auto metadata : midi)
         {
-            auto msg = metadata.getMessage();
-            if (msg.isNoteOn() && ! generating.load())
+            if (metadata.getMessage().isNoteOn() && ! generating.load())
             {
-                // Trigger on message thread to avoid thread issues
                 juce::MessageManager::callAsync ([this] { triggerGeneration(); });
                 break;
             }
         }
     }
 
-    // Playback
     if (! playing.load() || ! hasAudio.load() || generatedAudio.getNumSamples() == 0)
         return;
 
-    const int numChannels = juce::jmin (buffer.getNumChannels(),
-                                         generatedAudio.getNumChannels());
+    bool looping = PARAM_BOOL ("loop");
+    const int numChannels = juce::jmin (buffer.getNumChannels(), generatedAudio.getNumChannels());
     const int numSamples = buffer.getNumSamples();
     const int totalSamples = generatedAudio.getNumSamples();
     int pos = playbackPosition.load();
 
     for (int ch = 0; ch < numChannels; ++ch)
     {
-        int writePos = 0;
-        int readPos = pos;
-
+        int writePos = 0, readPos = pos;
         while (writePos < numSamples)
         {
-            int remaining = totalSamples - readPos;
-            int toCopy = juce::jmin (numSamples - writePos, remaining);
-
+            int toCopy = juce::jmin (numSamples - writePos, totalSamples - readPos);
             if (toCopy > 0)
                 buffer.copyFrom (ch, writePos, generatedAudio, ch, readPos, toCopy);
-
             writePos += toCopy;
             readPos += toCopy;
-
             if (readPos >= totalSamples)
             {
-                if (looping)
-                    readPos = 0;
-                else
-                {
-                    playing.store (false);
-                    break;
-                }
+                if (looping) readPos = 0;
+                else { playing.store (false); break; }
             }
         }
     }
@@ -142,104 +233,88 @@ void MLXAudioGenProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         pos = looping ? pos % totalSamples : totalSamples;
     playbackPosition.store (pos);
 
-    // Apply effects chain
-    if (fxEnabled)
+    if (PARAM_BOOL ("fxEnabled"))
         applyEffects (buffer);
 }
 
+// ---------------------------------------------------------------------------
+// Effects
+// ---------------------------------------------------------------------------
+
 void MLXAudioGenProcessor::updateEffectsParameters()
 {
-    // Reverb
-    juce::dsp::Reverb::Parameters reverbParams;
-    reverbParams.roomSize = reverbSize;
-    reverbParams.damping = reverbDamping;
-    reverbParams.wetLevel = reverbMix;
-    reverbParams.dryLevel = 1.0f - reverbMix * 0.5f;
-    reverb.setParameters (reverbParams);
-
-    // Delay
-    float delaySamples = delayTime * 0.001f * (float) currentSampleRate;
-    delayLine.setDelay (delaySamples);
+    juce::dsp::Reverb::Parameters rp;
+    rp.roomSize = PARAM_FLOAT ("reverbSize");
+    rp.damping = PARAM_FLOAT ("reverbDamping");
+    rp.wetLevel = PARAM_FLOAT ("reverbMix");
+    rp.dryLevel = 1.0f - rp.wetLevel * 0.5f;
+    reverb.setParameters (rp);
+    delayLine.setDelay (PARAM_FLOAT ("delayTime") * 0.001f * (float) currentSampleRate);
 }
 
 void MLXAudioGenProcessor::applyEffects (juce::AudioBuffer<float>& buffer)
 {
     updateEffectsParameters();
+    const int nc = buffer.getNumChannels();
+    const int ns = buffer.getNumSamples();
 
-    const int numChannels = buffer.getNumChannels();
-    const int numSamples = buffer.getNumSamples();
+    float compT = PARAM_FLOAT ("compThreshold");
+    float compR = PARAM_FLOAT ("compRatio");
+    float delayMx = PARAM_FLOAT ("delayMix");
+    float delayFb = PARAM_FLOAT ("delayFeedback");
+    float delayT = PARAM_FLOAT ("delayTime");
 
-    // Simple 3-band EQ using biquad coefficients
-    // (Applied directly to buffer for simplicity)
-
-    // Compressor (simple peak compressor)
-    if (compRatio > 1.0f)
+    if (compR > 1.0f)
     {
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int ch = 0; ch < nc; ++ch)
         {
-            auto* data = buffer.getWritePointer (ch);
-            for (int i = 0; i < numSamples; ++i)
+            auto* d = buffer.getWritePointer (ch);
+            for (int i = 0; i < ns; ++i)
             {
-                float sample = data[i];
-                float absLevel = std::abs (sample);
-                float levelDb = absLevel > 0.0001f
-                    ? 20.0f * std::log10 (absLevel)
-                    : -80.0f;
-
-                if (levelDb > compThreshold)
+                float a = std::abs (d[i]);
+                float db = a > 0.0001f ? 20.0f * std::log10 (a) : -80.0f;
+                if (db > compT)
                 {
-                    float excess = levelDb - compThreshold;
-                    float compressed = compThreshold + excess / compRatio;
-                    float gain = std::pow (10.0f, (compressed - levelDb) / 20.0f);
-                    data[i] *= gain;
+                    float g = std::pow (10.0f, ((compT + (db - compT) / compR) - db) / 20.0f);
+                    d[i] *= g;
                 }
             }
         }
     }
 
-    // Delay (ping-pong style)
-    if (delayTime > 0.0f && delayMix > 0.0f)
+    if (delayT > 0.0f && delayMx > 0.0f)
     {
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int ch = 0; ch < nc; ++ch)
         {
-            auto* data = buffer.getWritePointer (ch);
-            for (int i = 0; i < numSamples; ++i)
+            auto* d = buffer.getWritePointer (ch);
+            for (int i = 0; i < ns; ++i)
             {
                 float delayed = delayLine.popSample (ch);
-                delayLine.pushSample (ch, data[i] + delayed * delayFeedback);
-                data[i] = data[i] * (1.0f - delayMix) + delayed * delayMix;
+                delayLine.pushSample (ch, d[i] + delayed * delayFb);
+                d[i] = d[i] * (1.0f - delayMx) + delayed * delayMx;
             }
         }
     }
 
-    // Reverb
-    if (reverbMix > 0.0f)
+    if (PARAM_FLOAT ("reverbMix") > 0.0f)
     {
         juce::dsp::AudioBlock<float> block (buffer);
-        juce::dsp::ProcessContextReplacing<float> context (block);
-        reverb.process (context);
+        juce::dsp::ProcessContextReplacing<float> ctx (block);
+        reverb.process (ctx);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Playback control
+// Playback
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenProcessor::togglePlayback()
 {
-    if (! hasAudio.load())
-        return;
-
-    if (playing.load())
-    {
-        playing.store (false);
-    }
-    else
-    {
-        if (playbackPosition.load() >= generatedAudio.getNumSamples())
-            playbackPosition.store (0);
-        playing.store (true);
-    }
+    if (! hasAudio.load()) return;
+    if (playing.load()) { playing.store (false); return; }
+    if (playbackPosition.load() >= generatedAudio.getNumSamples())
+        playbackPosition.store (0);
+    playing.store (true);
 }
 
 void MLXAudioGenProcessor::stopPlayback()
@@ -250,8 +325,7 @@ void MLXAudioGenProcessor::stopPlayback()
 
 float MLXAudioGenProcessor::getPlaybackProgress() const
 {
-    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
-        return 0.0f;
+    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0) return 0.0f;
     return (float) playbackPosition.load() / (float) generatedAudio.getNumSamples();
 }
 
@@ -261,37 +335,27 @@ float MLXAudioGenProcessor::getPlaybackProgress() const
 
 float MLXAudioGenProcessor::getEffectiveBpm() const
 {
-    return useDawBpm ? dawBpm : manualBpm;
+    return PARAM_BOOL ("dawBpm") ? dawBpm : PARAM_FLOAT ("manualBpm");
 }
 
 float MLXAudioGenProcessor::getEffectiveSeconds() const
 {
-    if (! useBarsMode)
-        return seconds;
-
-    // bars × beats_per_bar × seconds_per_beat
+    if (! PARAM_BOOL ("barsMode"))
+        return PARAM_FLOAT ("seconds");
     float bpm = getEffectiveBpm();
     if (bpm <= 0.0f) bpm = 120.0f;
-    return (float) bars * 4.0f * (60.0f / bpm);
+    return (float) PARAM_INT ("bars") * 4.0f * (60.0f / bpm);
 }
 
 juce::String MLXAudioGenProcessor::buildFullPrompt() const
 {
-    auto fullPrompt = prompt;
-
-    // Append key signature if set
+    auto full = prompt;
     if (keySignature.isNotEmpty())
-        fullPrompt += " in " + keySignature;
-
-    // Append BPM hint for rhythmic content
-    if (useBarsMode || useDawBpm)
-    {
-        float bpm = getEffectiveBpm();
-        if (bpm > 0.0f)
-            fullPrompt += ", " + juce::String ((int) bpm) + " BPM";
-    }
-
-    return fullPrompt;
+        full += " in " + keySignature;
+    float bpm = getEffectiveBpm();
+    if (bpm > 0.0f && (PARAM_BOOL ("barsMode") || PARAM_BOOL ("dawBpm")))
+        full += ", " + juce::String ((int) bpm) + " BPM";
+    return full;
 }
 
 // ---------------------------------------------------------------------------
@@ -300,34 +364,25 @@ juce::String MLXAudioGenProcessor::buildFullPrompt() const
 
 void MLXAudioGenProcessor::triggerGeneration()
 {
-    if (generating.load())
-        return;
-
+    if (generating.load()) return;
     if (prompt.isEmpty())
     {
         juce::ScopedLock lock (stateLock);
         lastError = "Prompt is required";
         return;
     }
-
     if (! serverLauncher.isServerAlive())
     {
         juce::ScopedLock lock (stateLock);
         lastError = serverLauncher.getStatus();
-        if (lastError.isEmpty())
-            lastError = "Server not running. Waiting for auto-start...";
+        if (lastError.isEmpty()) lastError = "Server not running";
         return;
     }
 
     generating.store (true);
     progress.store (0.0f);
     playing.store (false);
-
-    {
-        juce::ScopedLock lock (stateLock);
-        statusMessage = "Submitting...";
-        lastError = {};
-    }
+    { juce::ScopedLock lock (stateLock); statusMessage = "Submitting..."; lastError = {}; }
 
     generationThread = std::make_unique<GenerationThread> (*this);
     generationThread->startThread();
@@ -336,32 +391,32 @@ void MLXAudioGenProcessor::triggerGeneration()
 void MLXAudioGenProcessor::runGeneration()
 {
     auto* obj = new juce::DynamicObject();
-    obj->setProperty ("model", modelType);
+    bool isStable = PARAM_CHOICE ("model") == 1;
+    obj->setProperty ("model", isStable ? "stable_audio" : "musicgen");
     obj->setProperty ("prompt", buildFullPrompt());
     obj->setProperty ("seconds", (double) getEffectiveSeconds());
 
-    if (modelType == "musicgen")
+    if (! isStable)
     {
-        obj->setProperty ("temperature", (double) temperature);
-        obj->setProperty ("top_k", topK);
-        obj->setProperty ("guidance_coef", (double) guidanceCoef);
+        obj->setProperty ("temperature", (double) PARAM_FLOAT ("temperature"));
+        obj->setProperty ("top_k", PARAM_INT ("topK"));
+        obj->setProperty ("guidance_coef", (double) PARAM_FLOAT ("guidance"));
     }
     else
     {
-        obj->setProperty ("steps", steps);
-        obj->setProperty ("cfg_scale", (double) cfgScale);
-        obj->setProperty ("sampler", sampler);
+        obj->setProperty ("steps", PARAM_INT ("steps"));
+        obj->setProperty ("cfg_scale", (double) PARAM_FLOAT ("cfgScale"));
+        obj->setProperty ("sampler", PARAM_CHOICE ("sampler") == 1 ? "rk4" : "euler");
         if (negativePrompt.isNotEmpty())
             obj->setProperty ("negative_prompt", negativePrompt);
     }
 
-    if (seed >= 0)
-        obj->setProperty ("seed", seed);
+    int s = PARAM_INT ("seed");
+    if (s >= 0) obj->setProperty ("seed", s);
 
-    juce::var json (obj);
-    auto jsonBody = juce::JSON::toString (json);
-
+    auto jsonBody = juce::JSON::toString (juce::var (obj));
     auto jobId = httpClient.submitGeneration (jsonBody);
+
     if (jobId.isEmpty())
     {
         juce::ScopedLock lock (stateLock);
@@ -371,129 +426,82 @@ void MLXAudioGenProcessor::runGeneration()
         return;
     }
 
-    {
-        juce::ScopedLock lock (stateLock);
-        statusMessage = "Generating...";
-    }
+    { juce::ScopedLock lock (stateLock); statusMessage = "Generating..."; }
 
-    // Poll until done
-    const int maxPolls = 1200;
-    for (int i = 0; i < maxPolls; ++i)
+    for (int i = 0; i < 1200; ++i)
     {
-        if (juce::Thread::currentThreadShouldExit())
-        {
-            generating.store (false);
-            return;
-        }
-
+        if (juce::Thread::currentThreadShouldExit()) { generating.store (false); return; }
         juce::Thread::sleep (500);
 
-        auto statusJson = httpClient.fetchStatus (jobId);
-        if (statusJson.isEmpty())
-            continue;
+        auto sj = httpClient.fetchStatus (jobId);
+        if (sj.isEmpty()) continue;
 
-        auto parsed = juce::JSON::parse (statusJson);
-        if (auto* statusObj = parsed.getDynamicObject())
+        auto parsed = juce::JSON::parse (sj);
+        if (auto* so = parsed.getDynamicObject())
         {
-            auto status = statusObj->getProperty ("status").toString();
-            auto progressVal = (float) statusObj->getProperty ("progress");
-            progress.store (progressVal);
+            auto st = so->getProperty ("status").toString();
+            float pv = (float) so->getProperty ("progress");
+            progress.store (pv);
 
-            if (status == "done")
+            if (st == "done")
             {
+                { juce::ScopedLock lock (stateLock); statusMessage = "Downloading..."; }
+                auto wav = httpClient.downloadAudio (jobId);
+                if (wav.getSize() > 0)
                 {
-                    juce::ScopedLock lock (stateLock);
-                    statusMessage = "Downloading audio...";
-                }
-
-                auto wavData = httpClient.downloadAudio (jobId);
-                if (wavData.getSize() > 0)
-                {
-                    auto inputStream = std::make_unique<juce::MemoryInputStream> (
-                        wavData, false);
-
-                    juce::WavAudioFormat wavFormat;
-                    auto reader = std::unique_ptr<juce::AudioFormatReader> (
-                        wavFormat.createReaderFor (inputStream.release(), true));
-
-                    if (reader != nullptr)
+                    auto is = std::make_unique<juce::MemoryInputStream> (wav, false);
+                    juce::WavAudioFormat fmt;
+                    auto rd = std::unique_ptr<juce::AudioFormatReader> (
+                        fmt.createReaderFor (is.release(), true));
+                    if (rd)
                     {
-                        generatedAudio.setSize (
-                            (int) reader->numChannels,
-                            (int) reader->lengthInSamples);
-                        reader->read (&generatedAudio, 0,
-                                      (int) reader->lengthInSamples, 0, true, true);
+                        generatedAudio.setSize ((int) rd->numChannels, (int) rd->lengthInSamples);
+                        rd->read (&generatedAudio, 0, (int) rd->lengthInSamples, 0, true, true);
                         playbackPosition.store (0);
                         hasAudio.store (true);
-                        playing.store (true); // Auto-play
-
-                        float durSecs = (float) reader->lengthInSamples
-                                        / (float) reader->sampleRate;
-                        {
-                            juce::ScopedLock lock (stateLock);
-                            statusMessage = juce::String ("Ready — ")
-                                            + juce::String (durSecs, 1) + "s loaded";
-                        }
+                        playing.store (true);
+                        float dur = (float) rd->lengthInSamples / (float) rd->sampleRate;
+                        { juce::ScopedLock lock (stateLock);
+                          statusMessage = "Ready — " + juce::String (dur, 1) + "s"; }
                     }
                     else
-                    {
-                        juce::ScopedLock lock (stateLock);
-                        lastError = "Failed to decode WAV";
-                        statusMessage = "Error";
-                    }
+                    { juce::ScopedLock lock (stateLock); lastError = "WAV decode failed"; statusMessage = "Error"; }
                 }
                 else
-                {
-                    juce::ScopedLock lock (stateLock);
-                    lastError = "Failed to download audio";
-                    statusMessage = "Error";
-                }
+                { juce::ScopedLock lock (stateLock); lastError = "Download failed"; statusMessage = "Error"; }
 
                 progress.store (1.0f);
                 generating.store (false);
                 return;
             }
-            else if (status == "error")
+            else if (st == "error")
             {
-                auto errorMsg = statusObj->getProperty ("error").toString();
+                auto em = so->getProperty ("error").toString();
                 juce::ScopedLock lock (stateLock);
-                lastError = errorMsg.isNotEmpty() ? errorMsg : "Generation failed";
+                lastError = em.isNotEmpty() ? em : "Failed";
                 statusMessage = "Error";
                 generating.store (false);
                 return;
             }
 
-            {
-                juce::ScopedLock lock (stateLock);
-                statusMessage = juce::String ("Generating... ")
-                                + juce::String ((int) (progressVal * 100)) + "%";
-            }
+            { juce::ScopedLock lock (stateLock);
+              statusMessage = "Generating " + juce::String ((int) (pv * 100)) + "%"; }
         }
     }
 
-    {
-        juce::ScopedLock lock (stateLock);
-        lastError = "Generation timed out (10 minutes)";
-        statusMessage = "Error";
-    }
+    { juce::ScopedLock lock (stateLock); lastError = "Timeout (10 min)"; statusMessage = "Error"; }
     generating.store (false);
 }
 
 // ---------------------------------------------------------------------------
-// Status accessors
+// Status
 // ---------------------------------------------------------------------------
 
 juce::String MLXAudioGenProcessor::getStatusMessage() const
-{
-    juce::ScopedLock lock (stateLock);
-    return statusMessage;
-}
+{ juce::ScopedLock lock (stateLock); return statusMessage; }
 
 juce::String MLXAudioGenProcessor::getLastError() const
-{
-    juce::ScopedLock lock (stateLock);
-    return lastError;
-}
+{ juce::ScopedLock lock (stateLock); return lastError; }
 
 void MLXAudioGenProcessor::timerCallback() {}
 
@@ -505,163 +513,100 @@ float MLXAudioGenProcessor::getSixteenthNoteSamples() const
 {
     float bpm = getEffectiveBpm();
     if (bpm <= 0.0f) bpm = 120.0f;
-    // 1 beat = 1 quarter note = 4 sixteenth notes
-    // seconds per 16th = 60 / bpm / 4
     return (60.0f / bpm / 4.0f) * (float) currentSampleRate;
 }
 
 float MLXAudioGenProcessor::getTotalBeats() const
 {
-    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
-        return 0.0f;
+    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0) return 0.0f;
     float bpm = getEffectiveBpm();
     if (bpm <= 0.0f) bpm = 120.0f;
-    float durationSecs = (float) generatedAudio.getNumSamples() / (float) currentSampleRate;
-    return durationSecs * bpm / 60.0f;
+    return (float) generatedAudio.getNumSamples() / (float) currentSampleRate * bpm / 60.0f;
 }
 
 int MLXAudioGenProcessor::getTrimStartSamples() const
 {
-    float sixteenth = getSixteenthNoteSamples();
-    // trimStartBeats is in beats (quarter notes), convert to 16ths (* 4)
-    float sixteenths = trimStartBeats * 4.0f;
-    // Snap to nearest 16th
-    int snapped = (int) std::round (sixteenths);
-    return juce::jmax (0, (int) (snapped * sixteenth));
+    float s16 = getSixteenthNoteSamples();
+    return juce::jmax (0, (int) (std::round (trimStartBeats * 4.0f) * s16));
 }
 
 int MLXAudioGenProcessor::getTrimEndSamples() const
 {
     if (! hasAudio.load()) return 0;
     int total = generatedAudio.getNumSamples();
-
-    if (trimEndBeats < 0.0f)
-        return total;
-
-    float sixteenth = getSixteenthNoteSamples();
-    float sixteenths = trimEndBeats * 4.0f;
-    int snapped = (int) std::round (sixteenths);
-    return juce::jmin (total, (int) (snapped * sixteenth));
+    if (trimEndBeats < 0.0f) return total;
+    float s16 = getSixteenthNoteSamples();
+    return juce::jmin (total, (int) (std::round (trimEndBeats * 4.0f) * s16));
 }
 
 void MLXAudioGenProcessor::applyTrim()
 {
-    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
-        return;
-
-    int start = getTrimStartSamples();
-    int end = getTrimEndSamples();
+    if (! hasAudio.load()) return;
+    int start = getTrimStartSamples(), end = getTrimEndSamples();
     if (start >= end) return;
-
-    int newLength = end - start;
-    int numChannels = generatedAudio.getNumChannels();
-
-    juce::AudioBuffer<float> trimmed (numChannels, newLength);
-    for (int ch = 0; ch < numChannels; ++ch)
-        trimmed.copyFrom (ch, 0, generatedAudio, ch, start, newLength);
-
+    int len = end - start, nc = generatedAudio.getNumChannels();
+    juce::AudioBuffer<float> trimmed (nc, len);
+    for (int ch = 0; ch < nc; ++ch)
+        trimmed.copyFrom (ch, 0, generatedAudio, ch, start, len);
     generatedAudio = std::move (trimmed);
     playbackPosition.store (0);
     trimStartBeats = 0.0f;
     trimEndBeats = -1.0f;
-
-    {
-        juce::ScopedLock lock (stateLock);
-        float durSecs = (float) newLength / (float) currentSampleRate;
-        statusMessage = juce::String ("Trimmed to ") + juce::String (durSecs, 3) + "s";
-    }
+    { juce::ScopedLock lock (stateLock);
+      statusMessage = "Trimmed to " + juce::String ((float) len / (float) currentSampleRate, 3) + "s"; }
 }
 
 // ---------------------------------------------------------------------------
-// Preset / Export (Phase 4e)
+// Preset / Export
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenProcessor::savePreset (const juce::File& file)
 {
     juce::MemoryBlock block;
     getStateInformation (block);
-
-    auto text = juce::String::fromUTF8 (
-        static_cast<const char*> (block.getData()), (int) block.getSize());
-    file.replaceWithText (text);
+    file.replaceWithText (juce::String::fromUTF8 (
+        static_cast<const char*> (block.getData()), (int) block.getSize()));
 }
 
 void MLXAudioGenProcessor::loadPreset (const juce::File& file)
 {
     auto text = file.loadFileAsString();
-    if (text.isEmpty())
-        return;
-
-    setStateInformation (text.toRawUTF8(), text.getNumBytesAsUTF8());
+    if (text.isNotEmpty())
+        setStateInformation (text.toRawUTF8(), text.getNumBytesAsUTF8());
 }
 
 void MLXAudioGenProcessor::exportAudio (const juce::File& file)
 {
-    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
-        return;
-
+    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0) return;
     file.deleteFile();
     auto stream = file.createOutputStream();
-    if (stream == nullptr)
-        return;
-
+    if (! stream) return;
     juce::WavAudioFormat wav;
     auto writer = std::unique_ptr<juce::AudioFormatWriter> (
-        wav.createWriterFor (stream.release(),
-                             currentSampleRate,
-                             (unsigned int) generatedAudio.getNumChannels(),
-                             32, {}, 0));
-
-    if (writer != nullptr)
-        writer->writeFromAudioSampleBuffer (generatedAudio, 0,
-                                             generatedAudio.getNumSamples());
+        wav.createWriterFor (stream.release(), currentSampleRate,
+                             (unsigned int) generatedAudio.getNumChannels(), 32, {}, 0));
+    if (writer)
+        writer->writeFromAudioSampleBuffer (generatedAudio, 0, generatedAudio.getNumSamples());
 }
 
 // ---------------------------------------------------------------------------
-// State persistence
+// State (APVTS handles automatable params; we add non-automatable here)
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty ("instanceName", instanceName);
-    obj->setProperty ("model", modelType);
-    obj->setProperty ("prompt", prompt);
-    obj->setProperty ("negativePrompt", negativePrompt);
-    obj->setProperty ("seconds", (double) seconds);
-    obj->setProperty ("temperature", (double) temperature);
-    obj->setProperty ("topK", topK);
-    obj->setProperty ("guidanceCoef", (double) guidanceCoef);
-    obj->setProperty ("steps", steps);
-    obj->setProperty ("cfgScale", (double) cfgScale);
-    obj->setProperty ("sampler", sampler);
-    obj->setProperty ("seed", seed);
-    obj->setProperty ("serverUrl", httpClient.getBaseUrl());
-    obj->setProperty ("useDawBpm", useDawBpm);
-    obj->setProperty ("manualBpm", (double) manualBpm);
-    obj->setProperty ("bars", bars);
-    obj->setProperty ("useBarsMode", useBarsMode);
-    obj->setProperty ("keySignature", keySignature);
-    obj->setProperty ("midiTrigger", midiTrigger);
-    obj->setProperty ("looping", looping);
-    obj->setProperty ("exportFolder", exportFolder);
-    obj->setProperty ("fxEnabled", fxEnabled);
-    obj->setProperty ("eqLowGain", (double) eqLowGain);
-    obj->setProperty ("eqMidGain", (double) eqMidGain);
-    obj->setProperty ("eqMidFreq", (double) eqMidFreq);
-    obj->setProperty ("eqHighGain", (double) eqHighGain);
-    obj->setProperty ("compThreshold", (double) compThreshold);
-    obj->setProperty ("compRatio", (double) compRatio);
-    obj->setProperty ("delayTime", (double) delayTime);
-    obj->setProperty ("delayFeedback", (double) delayFeedback);
-    obj->setProperty ("delayMix", (double) delayMix);
-    obj->setProperty ("reverbSize", (double) reverbSize);
-    obj->setProperty ("reverbDamping", (double) reverbDamping);
-    obj->setProperty ("reverbMix", (double) reverbMix);
+    auto state = apvts.copyState();
+    // Add non-automatable state
+    state.setProperty ("instanceName", instanceName, nullptr);
+    state.setProperty ("prompt", prompt, nullptr);
+    state.setProperty ("negativePrompt", negativePrompt, nullptr);
+    state.setProperty ("exportFolder", exportFolder, nullptr);
+    state.setProperty ("keySignature", keySignature, nullptr);
+    state.setProperty ("serverUrl", httpClient.getBaseUrl(), nullptr);
 
-    juce::var json (obj);
-    auto text = juce::JSON::toString (json);
-    destData.replaceAll (text.toRawUTF8(), text.getNumBytesAsUTF8());
+    auto xml = state.createXml();
+    if (xml)
+        copyXmlToBinary (*xml, destData);
 }
 
 juce::AudioProcessorEditor* MLXAudioGenProcessor::createEditor()
@@ -676,50 +621,19 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 
 void MLXAudioGenProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    auto text = juce::String::fromUTF8 (static_cast<const char*> (data), sizeInBytes);
-    auto parsed = juce::JSON::parse (text);
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (! xml) return;
 
-    if (auto* obj = parsed.getDynamicObject())
+    auto state = juce::ValueTree::fromXml (*xml);
+    if (state.isValid())
     {
-        instanceName = obj->getProperty ("instanceName").toString();
-        if (instanceName.isEmpty()) instanceName = "MLX AudioGen";
-        modelType = obj->getProperty ("model").toString();
-        prompt = obj->getProperty ("prompt").toString();
-        negativePrompt = obj->getProperty ("negativePrompt").toString();
-        seconds = (float) obj->getProperty ("seconds");
-        temperature = (float) obj->getProperty ("temperature");
-        topK = (int) obj->getProperty ("topK");
-        guidanceCoef = (float) obj->getProperty ("guidanceCoef");
-        steps = (int) obj->getProperty ("steps");
-        cfgScale = (float) obj->getProperty ("cfgScale");
-        sampler = obj->getProperty ("sampler").toString();
-        seed = (int) obj->getProperty ("seed");
-        useDawBpm = (bool) obj->getProperty ("useDawBpm");
-        manualBpm = (float) obj->getProperty ("manualBpm");
-        bars = (int) obj->getProperty ("bars");
-        useBarsMode = (bool) obj->getProperty ("useBarsMode");
-        keySignature = obj->getProperty ("keySignature").toString();
-        midiTrigger = (bool) obj->getProperty ("midiTrigger");
-        looping = (bool) obj->getProperty ("looping");
-
-        exportFolder = obj->getProperty ("exportFolder").toString();
-        fxEnabled = (bool) obj->getProperty ("fxEnabled");
-        eqLowGain = (float) obj->getProperty ("eqLowGain");
-        eqMidGain = (float) obj->getProperty ("eqMidGain");
-        eqMidFreq = (float) obj->getProperty ("eqMidFreq");
-        eqHighGain = (float) obj->getProperty ("eqHighGain");
-        compThreshold = (float) obj->getProperty ("compThreshold");
-        compRatio = (float) obj->getProperty ("compRatio");
-        if (compRatio < 1.0f) compRatio = 1.0f;
-        delayTime = (float) obj->getProperty ("delayTime");
-        delayFeedback = (float) obj->getProperty ("delayFeedback");
-        delayMix = (float) obj->getProperty ("delayMix");
-        reverbSize = (float) obj->getProperty ("reverbSize");
-        reverbDamping = (float) obj->getProperty ("reverbDamping");
-        reverbMix = (float) obj->getProperty ("reverbMix");
-
-        auto serverUrl = obj->getProperty ("serverUrl").toString();
-        if (serverUrl.isNotEmpty())
-            httpClient.setBaseUrl (serverUrl);
+        apvts.replaceState (state);
+        instanceName = state.getProperty ("instanceName", "MLX AudioGen").toString();
+        prompt = state.getProperty ("prompt", "").toString();
+        negativePrompt = state.getProperty ("negativePrompt", "").toString();
+        exportFolder = state.getProperty ("exportFolder", "").toString();
+        keySignature = state.getProperty ("keySignature", "").toString();
+        auto url = state.getProperty ("serverUrl", "").toString();
+        if (url.isNotEmpty()) httpClient.setBaseUrl (url);
     }
 }

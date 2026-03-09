@@ -1,38 +1,32 @@
 #include "PluginEditor.h"
 
-// ---------------------------------------------------------------------------
-// Slider styling helper
-// ---------------------------------------------------------------------------
-
-static void styleSlider (juce::Slider& slider, double min, double max,
-                          double interval, double defaultVal,
-                          juce::Slider::TextEntryBoxPosition textPos =
-                              juce::Slider::TextBoxRight)
+static void styleSlider (juce::Slider& s, juce::Slider::TextEntryBoxPosition tp = juce::Slider::TextBoxRight)
 {
-    slider.setRange (min, max, interval);
-    slider.setValue (defaultVal);
-    slider.setSliderStyle (juce::Slider::LinearHorizontal);
-    slider.setTextBoxStyle (textPos, false, 50, 18);
-    slider.setColour (juce::Slider::backgroundColourId,   juce::Colour (0xFF2A2A2A));
-    slider.setColour (juce::Slider::thumbColourId,         juce::Colour (0xFFFF6B35));
-    slider.setColour (juce::Slider::trackColourId,         juce::Colour (0xFFFF6B35).withAlpha (0.5f));
-    slider.setColour (juce::Slider::textBoxTextColourId,   juce::Colour (0xFFE8E8E8));
-    slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0xFF2A2A2A));
+    s.setSliderStyle (juce::Slider::LinearHorizontal);
+    s.setTextBoxStyle (tp, false, 50, 18);
+    s.setColour (juce::Slider::backgroundColourId,    juce::Colour (0xFF2A2A2A));
+    s.setColour (juce::Slider::thumbColourId,          juce::Colour (0xFFFF6B35));
+    s.setColour (juce::Slider::trackColourId,          juce::Colour (0xFFFF6B35).withAlpha (0.5f));
+    s.setColour (juce::Slider::textBoxTextColourId,    juce::Colour (0xFFE8E8E8));
+    s.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0xFF2A2A2A));
 }
 
-static void styleLabel (juce::Label& label)
-{
-    label.setColour (juce::Label::textColourId, juce::Colour (0xFF888888));
-    label.setFont (juce::Font (11.0f));
+static void styleToggle (juce::ToggleButton& t) {
+    t.setColour (juce::ToggleButton::textColourId, juce::Colour (0xFF888888));
+    t.setColour (juce::ToggleButton::tickColourId, juce::Colour (0xFFFF6B35));
 }
 
-static void styleToggle (juce::ToggleButton& toggle)
-{
-    toggle.setColour (juce::ToggleButton::textColourId, juce::Colour (0xFF888888));
-    toggle.setColour (juce::ToggleButton::tickColourId, juce::Colour (0xFFFF6B35));
+static void styleCombo (juce::ComboBox& c) {
+    c.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xFF1A1A1A));
+    c.setColour (juce::ComboBox::textColourId, juce::Colour (0xFFE8E8E8));
+    c.setColour (juce::ComboBox::outlineColourId, juce::Colour (0xFF2A2A2A));
 }
 
-// Key signature options
+static void styleBtn (juce::TextButton& b) {
+    b.setColour (juce::TextButton::buttonColourId, juce::Colour (0xFF1A1A1A));
+    b.setColour (juce::TextButton::textColourOffId, juce::Colour (0xFFE8E8E8));
+}
+
 static const juce::StringArray KEY_OPTIONS = {
     "", "C major", "C minor", "C# major", "C# minor",
     "D major", "D minor", "Eb major", "Eb minor",
@@ -42,10 +36,6 @@ static const juce::StringArray KEY_OPTIONS = {
     "Bb major", "Bb minor", "B major", "B minor"
 };
 
-// ---------------------------------------------------------------------------
-// Constructor
-// ---------------------------------------------------------------------------
-
 MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
 {
@@ -54,24 +44,19 @@ MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     // Instance name
     instanceNameInput.setColour (juce::TextEditor::backgroundColourId, juce::Colour (bgColour));
     instanceNameInput.setColour (juce::TextEditor::textColourId, juce::Colour (textColour));
-    instanceNameInput.setColour (juce::TextEditor::outlineColourId, juce::Colour (0x00000000));
+    instanceNameInput.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     instanceNameInput.setFont (juce::Font (14.0f, juce::Font::bold));
     instanceNameInput.setText (proc.instanceName);
     instanceNameInput.onTextChange = [this] { proc.instanceName = instanceNameInput.getText(); };
     addAndMakeVisible (instanceNameInput);
 
-    // Model selector
+    // Model
     modelSelector.addItem ("MusicGen", 1);
     modelSelector.addItem ("Stable Audio", 2);
-    modelSelector.setSelectedId (proc.modelType == "stable_audio" ? 2 : 1);
-    modelSelector.onChange = [this] {
-        proc.modelType = modelSelector.getSelectedId() == 2 ? "stable_audio" : "musicgen";
-        updateUIState();
-    };
-    modelSelector.setColour (juce::ComboBox::backgroundColourId, juce::Colour (surfaceColour));
-    modelSelector.setColour (juce::ComboBox::textColourId, juce::Colour (textColour));
-    modelSelector.setColour (juce::ComboBox::outlineColourId, juce::Colour (borderColour));
+    styleCombo (modelSelector);
     addAndMakeVisible (modelSelector);
+    modelAttach = std::make_unique<ComboAttach> (proc.apvts, "model", modelSelector);
+    modelSelector.onChange = [this] { updateUIState(); };
 
     // Prompt
     promptInput.setMultiLine (true);
@@ -85,290 +70,194 @@ MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     promptInput.onTextChange = [this] { proc.prompt = promptInput.getText(); };
     addAndMakeVisible (promptInput);
 
-    // --- Duration / Bars mode ---
-    styleToggle (barsModeToggle);
-    barsModeToggle.setToggleState (proc.useBarsMode, juce::dontSendNotification);
-    barsModeToggle.onClick = [this] {
-        proc.useBarsMode = barsModeToggle.getToggleState();
-        updateUIState();
+    // Key
+    keySelector.addItem ("(no key)", 1);
+    for (int i = 1; i < KEY_OPTIONS.size(); ++i)
+        keySelector.addItem (KEY_OPTIONS[i], i + 1);
+    int ki = KEY_OPTIONS.indexOf (proc.keySignature);
+    keySelector.setSelectedId (ki >= 0 ? ki + 1 : 1);
+    keySelector.onChange = [this] {
+        int idx = keySelector.getSelectedId() - 1;
+        proc.keySignature = (idx > 0 && idx < KEY_OPTIONS.size()) ? KEY_OPTIONS[idx] : "";
     };
-    addAndMakeVisible (barsModeToggle);
+    styleCombo (keySelector);
+    addAndMakeVisible (keySelector);
 
-    styleSlider (durationSlider, 0.5, 60.0, 0.5, proc.seconds);
-    durationSlider.onValueChange = [this] { proc.seconds = (float) durationSlider.getValue(); };
-    addAndMakeVisible (durationSlider);
-    styleLabel (durationLabel);
+    // Duration controls
+    styleToggle (barsModeToggle);
+    addAndMakeVisible (barsModeToggle);
+    barsModeAttach = std::make_unique<ButtonAttach> (proc.apvts, "barsMode", barsModeToggle);
+    barsModeToggle.onClick = [this] { updateUIState(); };
+
+    styleSlider (durationSlider); addAndMakeVisible (durationSlider);
+    durationAttach = std::make_unique<SliderAttach> (proc.apvts, "seconds", durationSlider);
+    durationLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
+    durationLabel.setFont (juce::Font (11.0f));
     addAndMakeVisible (durationLabel);
 
-    styleSlider (barsSlider, 1, 32, 1, proc.bars);
-    barsSlider.onValueChange = [this] { proc.bars = (int) barsSlider.getValue(); };
-    addAndMakeVisible (barsSlider);
-    styleLabel (barsLabel);
+    styleSlider (barsSlider); addAndMakeVisible (barsSlider);
+    barsAttach = std::make_unique<SliderAttach> (proc.apvts, "bars", barsSlider);
+    barsLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
+    barsLabel.setFont (juce::Font (11.0f));
     addAndMakeVisible (barsLabel);
 
-    // --- BPM ---
-    styleToggle (dawBpmToggle);
-    dawBpmToggle.setToggleState (proc.useDawBpm, juce::dontSendNotification);
-    dawBpmToggle.onClick = [this] {
-        proc.useDawBpm = dawBpmToggle.getToggleState();
-        updateUIState();
-    };
-    addAndMakeVisible (dawBpmToggle);
+    // BPM
+    styleToggle (dawBpmToggle); addAndMakeVisible (dawBpmToggle);
+    dawBpmAttach = std::make_unique<ButtonAttach> (proc.apvts, "dawBpm", dawBpmToggle);
+    dawBpmToggle.onClick = [this] { updateUIState(); };
 
-    styleSlider (bpmSlider, 40, 240, 1, proc.manualBpm);
-    bpmSlider.onValueChange = [this] { proc.manualBpm = (float) bpmSlider.getValue(); };
-    addAndMakeVisible (bpmSlider);
-    styleLabel (bpmLabel);
+    styleSlider (bpmSlider); addAndMakeVisible (bpmSlider);
+    bpmAttach = std::make_unique<SliderAttach> (proc.apvts, "manualBpm", bpmSlider);
+    bpmLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
     addAndMakeVisible (bpmLabel);
-
     bpmDisplay.setColour (juce::Label::textColourId, juce::Colour (accentColour));
     bpmDisplay.setFont (juce::Font (13.0f, juce::Font::bold));
     bpmDisplay.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (bpmDisplay);
 
-    // --- Key signature ---
-    keySelector.addItem ("(no key)", 1);
-    for (int i = 1; i < KEY_OPTIONS.size(); ++i)
-        keySelector.addItem (KEY_OPTIONS[i], i + 1);
+    // MusicGen params
+    styleSlider (temperatureSlider); addAndMakeVisible (temperatureSlider);
+    tempAttach = std::make_unique<SliderAttach> (proc.apvts, "temperature", temperatureSlider);
 
-    int keyIdx = KEY_OPTIONS.indexOf (proc.keySignature);
-    keySelector.setSelectedId (keyIdx >= 0 ? keyIdx + 1 : 1);
-    keySelector.onChange = [this] {
-        int idx = keySelector.getSelectedId() - 1;
-        proc.keySignature = (idx > 0 && idx < KEY_OPTIONS.size()) ? KEY_OPTIONS[idx] : "";
-    };
-    keySelector.setColour (juce::ComboBox::backgroundColourId, juce::Colour (surfaceColour));
-    keySelector.setColour (juce::ComboBox::textColourId, juce::Colour (textColour));
-    keySelector.setColour (juce::ComboBox::outlineColourId, juce::Colour (borderColour));
-    addAndMakeVisible (keySelector);
+    styleSlider (topKSlider); addAndMakeVisible (topKSlider);
+    topKAttach = std::make_unique<SliderAttach> (proc.apvts, "topK", topKSlider);
 
-    // --- MusicGen params ---
-    styleSlider (temperatureSlider, 0.1, 2.0, 0.05, proc.temperature);
-    temperatureSlider.onValueChange = [this] { proc.temperature = (float) temperatureSlider.getValue(); };
-    addAndMakeVisible (temperatureSlider);
+    styleSlider (guidanceSlider); addAndMakeVisible (guidanceSlider);
+    guidanceAttach = std::make_unique<SliderAttach> (proc.apvts, "guidance", guidanceSlider);
 
-    styleSlider (topKSlider, 1, 500, 1, proc.topK);
-    topKSlider.onValueChange = [this] { proc.topK = (int) topKSlider.getValue(); };
-    addAndMakeVisible (topKSlider);
+    // Stable Audio
+    styleSlider (stepsSlider); addAndMakeVisible (stepsSlider);
+    stepsAttach = std::make_unique<SliderAttach> (proc.apvts, "steps", stepsSlider);
 
-    styleSlider (guidanceSlider, 0, 10, 0.1, proc.guidanceCoef);
-    guidanceSlider.onValueChange = [this] { proc.guidanceCoef = (float) guidanceSlider.getValue(); };
-    addAndMakeVisible (guidanceSlider);
+    styleSlider (cfgScaleSlider); addAndMakeVisible (cfgScaleSlider);
+    cfgAttach = std::make_unique<SliderAttach> (proc.apvts, "cfgScale", cfgScaleSlider);
 
-    // --- Stable Audio params ---
-    styleSlider (stepsSlider, 1, 100, 1, proc.steps);
-    stepsSlider.onValueChange = [this] { proc.steps = (int) stepsSlider.getValue(); };
-    addAndMakeVisible (stepsSlider);
-
-    styleSlider (cfgScaleSlider, 0, 15, 0.1, proc.cfgScale);
-    cfgScaleSlider.onValueChange = [this] { proc.cfgScale = (float) cfgScaleSlider.getValue(); };
-    addAndMakeVisible (cfgScaleSlider);
-
-    samplerSelector.addItem ("Euler (fast)", 1);
-    samplerSelector.addItem ("RK4 (accurate)", 2);
-    samplerSelector.setSelectedId (proc.sampler == "rk4" ? 2 : 1);
-    samplerSelector.onChange = [this] {
-        proc.sampler = samplerSelector.getSelectedId() == 2 ? "rk4" : "euler";
-    };
-    samplerSelector.setColour (juce::ComboBox::backgroundColourId, juce::Colour (surfaceColour));
-    samplerSelector.setColour (juce::ComboBox::textColourId, juce::Colour (textColour));
-    samplerSelector.setColour (juce::ComboBox::outlineColourId, juce::Colour (borderColour));
+    samplerSelector.addItem ("Euler", 1);
+    samplerSelector.addItem ("RK4", 2);
+    styleCombo (samplerSelector);
     addAndMakeVisible (samplerSelector);
+    samplerAttach = std::make_unique<ComboAttach> (proc.apvts, "sampler", samplerSelector);
 
-    // --- Seed ---
-    styleSlider (seedSlider, 0, 99999, 1, proc.seed >= 0 ? proc.seed : 42);
-    seedSlider.onValueChange = [this] { proc.seed = (int) seedSlider.getValue(); };
-    addAndMakeVisible (seedSlider);
+    // Seed
+    styleSlider (seedSlider); addAndMakeVisible (seedSlider);
+    seedAttach = std::make_unique<SliderAttach> (proc.apvts, "seed", seedSlider);
 
-    styleToggle (randomSeedToggle);
-    randomSeedToggle.setToggleState (proc.seed < 0, juce::dontSendNotification);
-    randomSeedToggle.onClick = [this] {
-        proc.seed = randomSeedToggle.getToggleState() ? -1 : (int) seedSlider.getValue();
-        updateUIState();
-    };
-    addAndMakeVisible (randomSeedToggle);
+    // Transport
+    styleToggle (loopToggle); addAndMakeVisible (loopToggle);
+    loopAttach = std::make_unique<ButtonAttach> (proc.apvts, "loop", loopToggle);
 
-    // --- Generate button ---
+    styleToggle (midiTriggerToggle); addAndMakeVisible (midiTriggerToggle);
+    midiAttach = std::make_unique<ButtonAttach> (proc.apvts, "midiTrigger", midiTriggerToggle);
+
     generateButton.setColour (juce::TextButton::buttonColourId, juce::Colour (accentColour));
     generateButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xFF0A0A0A));
     generateButton.onClick = [this] { onGenerateClicked(); };
     addAndMakeVisible (generateButton);
 
-    // --- Transport ---
-    playButton.setColour (juce::TextButton::buttonColourId, juce::Colour (surfaceColour));
-    playButton.setColour (juce::TextButton::textColourOffId, juce::Colour (textColour));
-    playButton.onClick = [this] { proc.togglePlayback(); };
+    styleBtn (playButton); playButton.onClick = [this] { proc.togglePlayback(); };
     addAndMakeVisible (playButton);
-
-    stopButton.setColour (juce::TextButton::buttonColourId, juce::Colour (surfaceColour));
-    stopButton.setColour (juce::TextButton::textColourOffId, juce::Colour (textColour));
-    stopButton.onClick = [this] { proc.stopPlayback(); };
+    styleBtn (stopButton); stopButton.onClick = [this] { proc.stopPlayback(); };
     addAndMakeVisible (stopButton);
 
-    styleToggle (loopToggle);
-    loopToggle.setToggleState (proc.looping, juce::dontSendNotification);
-    loopToggle.onClick = [this] { proc.looping = loopToggle.getToggleState(); };
-    addAndMakeVisible (loopToggle);
+    // Effects
+    styleToggle (fxToggle); addAndMakeVisible (fxToggle);
+    fxAttach = std::make_unique<ButtonAttach> (proc.apvts, "fxEnabled", fxToggle);
+    fxToggle.onClick = [this] { updateUIState(); };
 
-    styleToggle (midiTriggerToggle);
-    midiTriggerToggle.setToggleState (proc.midiTrigger, juce::dontSendNotification);
-    midiTriggerToggle.onClick = [this] { proc.midiTrigger = midiTriggerToggle.getToggleState(); };
-    addAndMakeVisible (midiTriggerToggle);
+    styleSlider (compThresholdSlider); addAndMakeVisible (compThresholdSlider);
+    compTAttach = std::make_unique<SliderAttach> (proc.apvts, "compThreshold", compThresholdSlider);
+    styleSlider (compRatioSlider); addAndMakeVisible (compRatioSlider);
+    compRAttach = std::make_unique<SliderAttach> (proc.apvts, "compRatio", compRatioSlider);
+    styleSlider (delayTimeSlider); addAndMakeVisible (delayTimeSlider);
+    delayTAttach = std::make_unique<SliderAttach> (proc.apvts, "delayTime", delayTimeSlider);
+    styleSlider (delayMixSlider); addAndMakeVisible (delayMixSlider);
+    delayMxAttach = std::make_unique<SliderAttach> (proc.apvts, "delayMix", delayMixSlider);
+    styleSlider (reverbSizeSlider); addAndMakeVisible (reverbSizeSlider);
+    revSizeAttach = std::make_unique<SliderAttach> (proc.apvts, "reverbSize", reverbSizeSlider);
+    styleSlider (reverbMixSlider); addAndMakeVisible (reverbMixSlider);
+    revMixAttach = std::make_unique<SliderAttach> (proc.apvts, "reverbMix", reverbMixSlider);
 
-    // --- Effects ---
-    styleToggle (fxToggle);
-    fxToggle.setToggleState (proc.fxEnabled, juce::dontSendNotification);
-    fxToggle.onClick = [this] { proc.fxEnabled = fxToggle.getToggleState(); updateUIState(); };
-    addAndMakeVisible (fxToggle);
-
-    styleSlider (compThresholdSlider, -60, 0, 1, proc.compThreshold);
-    compThresholdSlider.setTextValueSuffix (" dB");
-    compThresholdSlider.onValueChange = [this] { proc.compThreshold = (float) compThresholdSlider.getValue(); };
-    addAndMakeVisible (compThresholdSlider);
-
-    styleSlider (compRatioSlider, 1, 20, 0.1, proc.compRatio);
-    compRatioSlider.setTextValueSuffix (":1");
-    compRatioSlider.onValueChange = [this] { proc.compRatio = (float) compRatioSlider.getValue(); };
-    addAndMakeVisible (compRatioSlider);
-
-    styleSlider (delayTimeSlider, 0, 1000, 1, proc.delayTime);
-    delayTimeSlider.setTextValueSuffix (" ms");
-    delayTimeSlider.onValueChange = [this] { proc.delayTime = (float) delayTimeSlider.getValue(); };
-    addAndMakeVisible (delayTimeSlider);
-
-    styleSlider (delayMixSlider, 0, 1, 0.01, proc.delayMix);
-    delayMixSlider.onValueChange = [this] { proc.delayMix = (float) delayMixSlider.getValue(); };
-    addAndMakeVisible (delayMixSlider);
-
-    styleSlider (reverbSizeSlider, 0, 1, 0.01, proc.reverbSize);
-    reverbSizeSlider.onValueChange = [this] { proc.reverbSize = (float) reverbSizeSlider.getValue(); };
-    addAndMakeVisible (reverbSizeSlider);
-
-    styleSlider (reverbMixSlider, 0, 1, 0.01, proc.reverbMix);
-    reverbMixSlider.onValueChange = [this] { proc.reverbMix = (float) reverbMixSlider.getValue(); };
-    addAndMakeVisible (reverbMixSlider);
-
-    // --- Beat-grid trimmer ---
-    styleSlider (trimStartSlider, 0, 32, 0.25, 0);  // 0.25 = 16th note (1/4 beat)
-    trimStartSlider.setTextValueSuffix (" beats");
-    trimStartSlider.onValueChange = [this] {
-        proc.trimStartBeats = (float) trimStartSlider.getValue();
-    };
+    // Trim
+    styleSlider (trimStartSlider); trimStartSlider.setRange (0, 32, 0.25);
+    trimStartSlider.onValueChange = [this] { proc.trimStartBeats = (float) trimStartSlider.getValue(); };
     addAndMakeVisible (trimStartSlider);
-
-    styleSlider (trimEndSlider, 0, 32, 0.25, 0);
-    trimEndSlider.setTextValueSuffix (" beats");
+    styleSlider (trimEndSlider); trimEndSlider.setRange (0, 32, 0.25);
     trimEndSlider.onValueChange = [this] {
-        float val = (float) trimEndSlider.getValue();
-        proc.trimEndBeats = val > 0.0f ? val : -1.0f;
+        float v = (float) trimEndSlider.getValue();
+        proc.trimEndBeats = v > 0.0f ? v : -1.0f;
     };
     addAndMakeVisible (trimEndSlider);
-
-    trimButton.setColour (juce::TextButton::buttonColourId, juce::Colour (surfaceColour));
-    trimButton.setColour (juce::TextButton::textColourOffId, juce::Colour (textColour));
-    trimButton.onClick = [this] { proc.applyTrim(); };
+    styleBtn (trimButton); trimButton.onClick = [this] { proc.applyTrim(); };
     addAndMakeVisible (trimButton);
-
     trimInfoLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
     trimInfoLabel.setFont (juce::Font (10.0f));
     addAndMakeVisible (trimInfoLabel);
 
-    // --- Preset / Export buttons ---
-    auto styleButton = [this] (juce::TextButton& btn) {
-        btn.setColour (juce::TextButton::buttonColourId, juce::Colour (surfaceColour));
-        btn.setColour (juce::TextButton::textColourOffId, juce::Colour (textColour));
-    };
-
-    styleButton (savePresetButton);
+    // Preset / Export
+    styleBtn (savePresetButton);
     savePresetButton.onClick = [this] {
-        auto chooser = std::make_shared<juce::FileChooser> (
-            "Save Preset", juce::File(), "*.mlxpreset");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode, [this, chooser] (const auto& fc) {
-            auto file = fc.getResult();
-            if (file != juce::File())
-                proc.savePreset (file.withFileExtension ("mlxpreset"));
+        auto c = std::make_shared<juce::FileChooser> ("Save Preset", juce::File(), "*.mlxpreset");
+        c->launchAsync (juce::FileBrowserComponent::saveMode, [this, c] (const auto& fc) {
+            auto f = fc.getResult();
+            if (f != juce::File()) proc.savePreset (f.withFileExtension ("mlxpreset"));
         });
     };
     addAndMakeVisible (savePresetButton);
 
-    styleButton (loadPresetButton);
+    styleBtn (loadPresetButton);
     loadPresetButton.onClick = [this] {
-        auto chooser = std::make_shared<juce::FileChooser> (
-            "Load Preset", juce::File(), "*.mlxpreset");
-        chooser->launchAsync (juce::FileBrowserComponent::openMode, [this, chooser] (const auto& fc) {
-            auto file = fc.getResult();
-            if (file != juce::File())
-            {
-                proc.loadPreset (file);
-                // Refresh UI to match loaded state
-                modelSelector.setSelectedId (proc.modelType == "stable_audio" ? 2 : 1);
-                promptInput.setText (proc.prompt);
-                durationSlider.setValue (proc.seconds);
-                updateUIState();
-            }
+        auto c = std::make_shared<juce::FileChooser> ("Load Preset", juce::File(), "*.mlxpreset");
+        c->launchAsync (juce::FileBrowserComponent::openMode, [this, c] (const auto& fc) {
+            auto f = fc.getResult();
+            if (f != juce::File()) { proc.loadPreset (f); promptInput.setText (proc.prompt); updateUIState(); }
         });
     };
     addAndMakeVisible (loadPresetButton);
 
-    styleButton (exportAudioButton);
+    styleBtn (exportAudioButton);
     exportAudioButton.onClick = [this] {
-        // If export folder is set, save there with auto-name
-        if (proc.exportFolder.isNotEmpty())
-        {
-            auto folder = juce::File (proc.exportFolder);
-            if (folder.isDirectory())
-            {
-                auto timestamp = juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S");
-                auto name = proc.instanceName.replaceCharacter (' ', '_') + "_" + timestamp + ".wav";
-                proc.exportAudio (folder.getChildFile (name));
+        if (proc.exportFolder.isNotEmpty()) {
+            auto dir = juce::File (proc.exportFolder);
+            if (dir.isDirectory()) {
+                auto ts = juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S");
+                proc.exportAudio (dir.getChildFile (proc.instanceName.replaceCharacter (' ', '_') + "_" + ts + ".wav"));
                 return;
             }
         }
-        // Otherwise show file chooser
-        auto chooser = std::make_shared<juce::FileChooser> (
-            "Export Audio", juce::File(), "*.wav");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode, [this, chooser] (const auto& fc) {
-            auto file = fc.getResult();
-            if (file != juce::File())
-                proc.exportAudio (file.withFileExtension ("wav"));
+        auto c = std::make_shared<juce::FileChooser> ("Export", juce::File(), "*.wav");
+        c->launchAsync (juce::FileBrowserComponent::saveMode, [this, c] (const auto& fc) {
+            auto f = fc.getResult();
+            if (f != juce::File()) proc.exportAudio (f.withFileExtension ("wav"));
         });
     };
     addAndMakeVisible (exportAudioButton);
 
-    styleButton (setFolderButton);
+    styleBtn (setFolderButton);
     setFolderButton.onClick = [this] {
-        auto startDir = proc.exportFolder.isNotEmpty()
-            ? juce::File (proc.exportFolder) : juce::File();
-        auto chooser = std::make_shared<juce::FileChooser> (
-            "Choose Export Folder", startDir);
-        chooser->launchAsync (juce::FileBrowserComponent::openMode
-                              | juce::FileBrowserComponent::canSelectDirectories,
-                              [this, chooser] (const auto& fc) {
-            auto folder = fc.getResult();
-            if (folder != juce::File() && folder.isDirectory())
-            {
-                proc.exportFolder = folder.getFullPathName();
-                folderLabel.setText (folder.getFileName(), juce::dontSendNotification);
-            }
-        });
+        auto c = std::make_shared<juce::FileChooser> ("Export Folder",
+            proc.exportFolder.isNotEmpty() ? juce::File (proc.exportFolder) : juce::File());
+        c->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+            [this, c] (const auto& fc) {
+                auto f = fc.getResult();
+                if (f != juce::File() && f.isDirectory()) {
+                    proc.exportFolder = f.getFullPathName();
+                    folderLabel.setText (f.getFileName(), juce::dontSendNotification);
+                }
+            });
     };
     addAndMakeVisible (setFolderButton);
 
     folderLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
     folderLabel.setFont (juce::Font (10.0f));
-    if (proc.exportFolder.isNotEmpty())
-        folderLabel.setText (juce::File (proc.exportFolder).getFileName(),
-                             juce::dontSendNotification);
-    else
-        folderLabel.setText ("(ask each time)", juce::dontSendNotification);
+    folderLabel.setText (proc.exportFolder.isNotEmpty()
+        ? juce::File (proc.exportFolder).getFileName() : "(ask each time)",
+        juce::dontSendNotification);
     addAndMakeVisible (folderLabel);
 
-    // --- Status ---
     statusLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
     statusLabel.setFont (juce::Font (11.0f));
     statusLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (statusLabel);
-
     errorLabel.setColour (juce::Label::textColourId, juce::Colour (errorColourVal));
     errorLabel.setFont (juce::Font (11.0f));
     errorLabel.setJustificationType (juce::Justification::centred);
@@ -378,36 +267,19 @@ MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     startTimerHz (15);
 }
 
-MLXAudioGenEditor::~MLXAudioGenEditor()
-{
-    stopTimer();
-}
+MLXAudioGenEditor::~MLXAudioGenEditor() { stopTimer(); }
 
-// ---------------------------------------------------------------------------
-// Paint — waveform + progress bar
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenEditor::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (bgColour));
-
-    // Section dividers
-    auto drawDivider = [&] (int y) {
-        g.setColour (juce::Colour (borderColour));
-        g.drawHorizontalLine (y, 16.0f, (float) getWidth() - 16.0f);
-    };
-
-    drawDivider (waveformBounds.getY() - 4);
-
-    // Waveform
+    g.setColour (juce::Colour (borderColour));
+    g.drawHorizontalLine (waveformBounds.getY() - 4, 14.0f, (float) getWidth() - 14.0f);
     drawWaveform (g, waveformBounds);
-
-    // Generation progress bar (bottom edge)
-    if (proc.isGenerating())
-    {
+    if (proc.isGenerating()) {
         auto bar = getLocalBounds().removeFromBottom (3);
-        g.setColour (juce::Colour (borderColour));
-        g.fillRect (bar);
+        g.setColour (juce::Colour (borderColour)); g.fillRect (bar);
         g.setColour (juce::Colour (accentColour));
         g.fillRect (bar.removeFromLeft ((int) (bar.getWidth() * displayProgress)));
     }
@@ -419,383 +291,199 @@ void MLXAudioGenEditor::drawWaveform (juce::Graphics& g, juce::Rectangle<int> bo
     g.fillRoundedRectangle (bounds.toFloat(), 4.0f);
 
     const auto& audio = proc.getGeneratedAudio();
-    if (audio.getNumSamples() == 0)
-    {
+    if (audio.getNumSamples() == 0) {
         g.setColour (juce::Colour (dimTextColour).withAlpha (0.3f));
-        g.drawText ("No audio generated yet", bounds, juce::Justification::centred);
+        g.drawText ("No audio", bounds, juce::Justification::centred);
         return;
     }
 
-    // Draw waveform
     const float* samples = audio.getReadPointer (0);
     const int numSamples = audio.getNumSamples();
-    const float width = (float) bounds.getWidth();
-    const float height = (float) bounds.getHeight();
-    const float midY = bounds.getCentreY();
+    const float w = (float) bounds.getWidth();
+    const float h = (float) bounds.getHeight();
+    const float midY = (float) bounds.getCentreY();
 
+    // Waveform
     g.setColour (juce::Colour (accentColour).withAlpha (0.7f));
-
     juce::Path path;
-    for (int x = 0; x < (int) width; ++x)
-    {
-        // Map pixel to sample range
-        int startSample = (int) ((float) x / width * numSamples);
-        int endSample = (int) ((float) (x + 1) / width * numSamples);
-        endSample = juce::jmin (endSample, numSamples);
-
-        // Find peak in this range
-        float maxVal = 0.0f;
-        for (int s = startSample; s < endSample; ++s)
-            maxVal = juce::jmax (maxVal, std::abs (samples[s]));
-
-        float y = maxVal * height * 0.45f;
-        float px = (float) (bounds.getX() + x);
-
-        if (x == 0)
-        {
-            path.startNewSubPath (px, midY - y);
-        }
-        else
-        {
-            path.lineTo (px, midY - y);
-        }
+    for (int x = 0; x < (int) w; ++x) {
+        int s0 = (int) ((float) x / w * numSamples);
+        int s1 = juce::jmin ((int) ((float) (x + 1) / w * numSamples), numSamples);
+        float pk = 0.0f;
+        for (int s = s0; s < s1; ++s) pk = juce::jmax (pk, std::abs (samples[s]));
+        float y = pk * h * 0.45f;
+        float px = (float) bounds.getX() + (float) x;
+        if (x == 0) path.startNewSubPath (px, midY - y);
+        else path.lineTo (px, midY - y);
     }
-
-    // Mirror bottom
-    for (int x = (int) width - 1; x >= 0; --x)
-    {
-        int startSample = (int) ((float) x / width * numSamples);
-        int endSample = (int) ((float) (x + 1) / width * numSamples);
-        endSample = juce::jmin (endSample, numSamples);
-
-        float maxVal = 0.0f;
-        for (int s = startSample; s < endSample; ++s)
-            maxVal = juce::jmax (maxVal, std::abs (samples[s]));
-
-        float y = maxVal * height * 0.45f;
-        float px = (float) (bounds.getX() + x);
-        path.lineTo (px, midY + y);
+    for (int x = (int) w - 1; x >= 0; --x) {
+        int s0 = (int) ((float) x / w * numSamples);
+        int s1 = juce::jmin ((int) ((float) (x + 1) / w * numSamples), numSamples);
+        float pk = 0.0f;
+        for (int s = s0; s < s1; ++s) pk = juce::jmax (pk, std::abs (samples[s]));
+        float y = pk * h * 0.45f;
+        path.lineTo ((float) bounds.getX() + (float) x, midY + y);
     }
-
     path.closeSubPath();
     g.fillPath (path);
 
-    // Beat grid lines (16th notes)
-    if (proc.hasAudioLoaded())
-    {
-        float totalBeats = proc.getTotalBeats();
-        if (totalBeats > 0.0f)
-        {
-            float sixteenthsTotal = totalBeats * 4.0f;
-            for (int s = 0; s <= (int) sixteenthsTotal; ++s)
-            {
-                float frac = (float) s / sixteenthsTotal;
-                int lineX = bounds.getX() + (int) (frac * width);
-
-                if (s % 16 == 0)
-                {
-                    // Bar line — bright
-                    g.setColour (juce::Colour (textColour).withAlpha (0.4f));
-                }
-                else if (s % 4 == 0)
-                {
-                    // Beat line — medium
-                    g.setColour (juce::Colour (dimTextColour).withAlpha (0.25f));
-                }
-                else
-                {
-                    // 16th note — dim
-                    g.setColour (juce::Colour (dimTextColour).withAlpha (0.1f));
-                }
-
-                g.drawVerticalLine (lineX, (float) bounds.getY(), (float) bounds.getBottom());
-            }
+    // Beat grid
+    float totalBeats = proc.getTotalBeats();
+    if (totalBeats > 0.0f) {
+        float s16total = totalBeats * 4.0f;
+        for (int s = 0; s <= (int) s16total; ++s) {
+            float frac = (float) s / s16total;
+            int lx = bounds.getX() + (int) (frac * w);
+            if (s % 16 == 0) g.setColour (juce::Colour (textColour).withAlpha (0.4f));
+            else if (s % 4 == 0) g.setColour (juce::Colour (dimTextColour).withAlpha (0.25f));
+            else g.setColour (juce::Colour (dimTextColour).withAlpha (0.1f));
+            g.drawVerticalLine (lx, (float) bounds.getY(), (float) bounds.getBottom());
         }
+    }
 
-        // Trim region highlight
-        int trimStart = proc.getTrimStartSamples();
-        int trimEnd = proc.getTrimEndSamples();
-        if (trimStart > 0 || (trimEnd < numSamples && trimEnd > 0))
-        {
-            float startFrac = (float) trimStart / (float) numSamples;
-            float endFrac = (float) trimEnd / (float) numSamples;
+    // Trim region
+    int ts = proc.getTrimStartSamples(), te = proc.getTrimEndSamples();
+    if (ts > 0 || (te < numSamples && te > 0)) {
+        float sf = (float) ts / (float) numSamples, ef = (float) te / (float) numSamples;
+        g.setColour (juce::Colour (bgColour).withAlpha (0.6f));
+        if (ts > 0) g.fillRect (bounds.getX(), bounds.getY(), (int) (sf * w), bounds.getHeight());
+        if (te < numSamples) g.fillRect (bounds.getX() + (int) (ef * w), bounds.getY(), (int) ((1.0f - ef) * w), bounds.getHeight());
+        g.setColour (juce::Colour (successColour));
+        g.drawVerticalLine (bounds.getX() + (int) (sf * w), (float) bounds.getY(), (float) bounds.getBottom());
+        g.drawVerticalLine (bounds.getX() + (int) (ef * w), (float) bounds.getY(), (float) bounds.getBottom());
+    }
 
-            // Dim the outside-of-trim regions
-            g.setColour (juce::Colour (bgColour).withAlpha (0.6f));
-            if (trimStart > 0)
-                g.fillRect (bounds.getX(), bounds.getY(),
-                            (int) (startFrac * width), bounds.getHeight());
-            if (trimEnd < numSamples)
-                g.fillRect (bounds.getX() + (int) (endFrac * width), bounds.getY(),
-                            (int) ((1.0f - endFrac) * width), bounds.getHeight());
-
-            // Trim boundary lines
-            g.setColour (juce::Colour (successColour));
-            g.drawVerticalLine (bounds.getX() + (int) (startFrac * width),
-                                (float) bounds.getY(), (float) bounds.getBottom());
-            g.drawVerticalLine (bounds.getX() + (int) (endFrac * width),
-                                (float) bounds.getY(), (float) bounds.getBottom());
-        }
-
-        // Playback position indicator
-        float playProgress = proc.getPlaybackProgress();
-        int lineX = bounds.getX() + (int) (playProgress * width);
+    // Playback position
+    if (proc.hasAudioLoaded()) {
+        int lx = bounds.getX() + (int) (proc.getPlaybackProgress() * w);
         g.setColour (juce::Colour (textColour));
-        g.drawVerticalLine (lineX, (float) bounds.getY(), (float) bounds.getBottom());
+        g.drawVerticalLine (lx, (float) bounds.getY(), (float) bounds.getBottom());
     }
 }
 
-// ---------------------------------------------------------------------------
-// Layout
 // ---------------------------------------------------------------------------
 
 void MLXAudioGenEditor::resized()
 {
     auto area = getLocalBounds().reduced (14);
-    const int rowH = 22;
-    const int gap = 5;
-    const int labelW = 75;
+    const int rh = 22, gap = 4, lw = 70;
 
-    // Instance name
-    instanceNameInput.setBounds (area.removeFromTop (22));
-    area.removeFromTop (3);
-
-    // Model selector
-    modelSelector.setBounds (area.removeFromTop (26));
+    instanceNameInput.setBounds (area.removeFromTop (20)); area.removeFromTop (3);
+    auto topRow = area.removeFromTop (26);
+    modelSelector.setBounds (topRow.removeFromLeft (topRow.getWidth() / 2 - 2));
+    topRow.removeFromLeft (4);
+    keySelector.setBounds (topRow);
     area.removeFromTop (gap);
 
-    // Key signature (next to model)
-    auto keyRow = area.removeFromTop (26);
-    auto keyLabelArea = keyRow.removeFromLeft (labelW);
-    // Draw "Key" label by just setting bounds
-    keySelector.setBounds (keyRow);
+    promptInput.setBounds (area.removeFromTop (50)); area.removeFromTop (gap);
+
+    // Duration
+    auto dr = area.removeFromTop (rh);
+    barsModeToggle.setBounds (dr.removeFromLeft (55));
+    if (barsModeToggle.getToggleState()) { barsLabel.setBounds (dr.removeFromLeft (35)); barsSlider.setBounds (dr); }
+    else { durationLabel.setBounds (dr.removeFromLeft (25)); durationSlider.setBounds (dr); }
     area.removeFromTop (gap);
 
-    // Prompt
-    promptInput.setBounds (area.removeFromTop (56));
+    // BPM
+    auto br = area.removeFromTop (rh);
+    dawBpmToggle.setBounds (br.removeFromLeft (85));
+    bpmDisplay.setBounds (br.removeFromRight (60));
+    if (! dawBpmToggle.getToggleState()) { bpmLabel.setBounds (br.removeFromLeft (30)); bpmSlider.setBounds (br); }
     area.removeFromTop (gap);
 
-    // Duration mode toggle + controls
-    auto durModeRow = area.removeFromTop (rowH);
-    barsModeToggle.setBounds (durModeRow.removeFromLeft (60));
+    bool mg = modelSelector.getSelectedId() != 2;
+    auto sr = [&] (juce::Slider& s) { auto r = area.removeFromTop (rh); r.removeFromLeft (lw); s.setBounds (r); area.removeFromTop (3); };
+    if (mg) { sr (temperatureSlider); sr (topKSlider); sr (guidanceSlider); }
+    else { sr (stepsSlider); sr (cfgScaleSlider); auto r = area.removeFromTop (rh); r.removeFromLeft (lw); samplerSelector.setBounds (r); area.removeFromTop (3); }
 
-    if (proc.useBarsMode)
-    {
-        barsLabel.setBounds (durModeRow.removeFromLeft (labelW - 60));
-        barsSlider.setBounds (durModeRow);
-    }
-    else
-    {
-        durationLabel.setBounds (durModeRow.removeFromLeft (labelW - 60));
-        durationSlider.setBounds (durModeRow);
-    }
+    auto seedR = area.removeFromTop (rh); seedR.removeFromLeft (lw); seedSlider.setBounds (seedR); area.removeFromTop (gap);
+    auto optR = area.removeFromTop (rh);
+    midiTriggerToggle.setBounds (optR.removeFromLeft (110));
+    loopToggle.setBounds (optR.removeFromLeft (70));
     area.removeFromTop (gap);
 
-    // BPM row
-    auto bpmRow = area.removeFromTop (rowH);
-    dawBpmToggle.setBounds (bpmRow.removeFromLeft (85));
-    bpmDisplay.setBounds (bpmRow.removeFromRight (60));
-
-    if (! proc.useDawBpm)
-    {
-        bpmLabel.setBounds (bpmRow.removeFromLeft (30));
-        bpmSlider.setBounds (bpmRow);
-    }
+    generateButton.setBounds (area.removeFromTop (30)); area.removeFromTop (gap);
+    auto tr = area.removeFromTop (26);
+    playButton.setBounds (tr.removeFromLeft (70)); tr.removeFromLeft (4);
+    stopButton.setBounds (tr.removeFromLeft (70));
     area.removeFromTop (gap);
 
-    // Model-specific params
-    bool isMusicGen = proc.modelType != "stable_audio";
-    auto makeSliderRow = [&] (juce::Slider& slider) {
-        auto row = area.removeFromTop (rowH);
-        row.removeFromLeft (labelW);
-        slider.setBounds (row);
-        area.removeFromTop (3);
-    };
+    // Trim
+    auto t1 = area.removeFromTop (rh); t1.removeFromLeft (lw); trimStartSlider.setBounds (t1); area.removeFromTop (3);
+    auto t2 = area.removeFromTop (rh); t2.removeFromLeft (lw); trimEndSlider.setBounds (t2); area.removeFromTop (3);
+    auto t3 = area.removeFromTop (18);
+    trimButton.setBounds (t3.removeFromLeft (50)); t3.removeFromLeft (4);
+    trimInfoLabel.setBounds (t3); area.removeFromTop (gap);
 
-    if (isMusicGen)
-    {
-        makeSliderRow (temperatureSlider);
-        makeSliderRow (topKSlider);
-        makeSliderRow (guidanceSlider);
-    }
-    else
-    {
-        makeSliderRow (stepsSlider);
-        makeSliderRow (cfgScaleSlider);
-        auto samplerRow = area.removeFromTop (rowH);
-        samplerRow.removeFromLeft (labelW);
-        samplerSelector.setBounds (samplerRow);
-        area.removeFromTop (3);
-    }
+    // FX
+    fxToggle.setBounds (area.removeFromTop (rh)); area.removeFromTop (3);
+    bool fx = fxToggle.getToggleState();
+    if (fx) { sr (compThresholdSlider); sr (compRatioSlider); sr (delayTimeSlider); sr (delayMixSlider); sr (reverbSizeSlider); sr (reverbMixSlider); }
 
-    // Seed
-    auto seedRow = area.removeFromTop (rowH);
-    randomSeedToggle.setBounds (seedRow.removeFromLeft (80));
-    seedSlider.setBounds (seedRow);
+    // Preset row
+    auto pr = area.removeFromTop (22);
+    int bw = (pr.getWidth() - 6) / 3;
+    savePresetButton.setBounds (pr.removeFromLeft (bw)); pr.removeFromLeft (3);
+    loadPresetButton.setBounds (pr.removeFromLeft (bw)); pr.removeFromLeft (3);
+    exportAudioButton.setBounds (pr); area.removeFromTop (3);
+    auto fr = area.removeFromTop (18);
+    setFolderButton.setBounds (fr.removeFromLeft (55)); fr.removeFromLeft (4);
+    folderLabel.setBounds (fr); area.removeFromTop (gap);
+
+    statusLabel.setBounds (area.removeFromTop (14));
+    errorLabel.setBounds (area.removeFromTop (14));
     area.removeFromTop (gap);
 
-    // MIDI trigger + loop
-    auto optionsRow = area.removeFromTop (rowH);
-    midiTriggerToggle.setBounds (optionsRow.removeFromLeft (110));
-    loopToggle.setBounds (optionsRow.removeFromLeft (70));
-    area.removeFromTop (gap);
-
-    // Generate button
-    generateButton.setBounds (area.removeFromTop (32));
-    area.removeFromTop (gap);
-
-    // Transport
-    auto transportRow = area.removeFromTop (28);
-    playButton.setBounds (transportRow.removeFromLeft (80));
-    transportRow.removeFromLeft (4);
-    stopButton.setBounds (transportRow.removeFromLeft (80));
-    area.removeFromTop (gap);
-
-    // Trim controls
-    auto trimRow1 = area.removeFromTop (rowH);
-    trimRow1.removeFromLeft (labelW);
-    trimStartSlider.setBounds (trimRow1);
-    area.removeFromTop (3);
-
-    auto trimRow2 = area.removeFromTop (rowH);
-    trimRow2.removeFromLeft (labelW);
-    trimEndSlider.setBounds (trimRow2);
-    area.removeFromTop (3);
-
-    auto trimRow3 = area.removeFromTop (20);
-    trimButton.setBounds (trimRow3.removeFromLeft (60));
-    trimRow3.removeFromLeft (4);
-    trimInfoLabel.setBounds (trimRow3);
-    area.removeFromTop (gap);
-
-    // Preset / Export
-    auto presetRow = area.removeFromTop (24);
-    int btnW = (presetRow.getWidth() - 8) / 3;
-    savePresetButton.setBounds (presetRow.removeFromLeft (btnW));
-    presetRow.removeFromLeft (4);
-    loadPresetButton.setBounds (presetRow.removeFromLeft (btnW));
-    presetRow.removeFromLeft (4);
-    exportAudioButton.setBounds (presetRow);
-    area.removeFromTop (3);
-
-    // Export folder
-    auto folderRow = area.removeFromTop (20);
-    setFolderButton.setBounds (folderRow.removeFromLeft (80));
-    folderRow.removeFromLeft (4);
-    folderLabel.setBounds (folderRow);
-    area.removeFromTop (gap);
-
-    // Effects
-    fxToggle.setBounds (area.removeFromTop (rowH));
-    area.removeFromTop (3);
-    if (proc.fxEnabled)
-    {
-        makeSliderRow (compThresholdSlider);
-        makeSliderRow (compRatioSlider);
-        makeSliderRow (delayTimeSlider);
-        makeSliderRow (delayMixSlider);
-        makeSliderRow (reverbSizeSlider);
-        makeSliderRow (reverbMixSlider);
-    }
-    area.removeFromTop (gap);
-
-    // Status / Error
-    statusLabel.setBounds (area.removeFromTop (16));
-    errorLabel.setBounds (area.removeFromTop (16));
-    area.removeFromTop (gap);
-
-    // Waveform gets remaining space
     waveformBounds = area;
 }
 
-// ---------------------------------------------------------------------------
-// UI updates
-// ---------------------------------------------------------------------------
-
 void MLXAudioGenEditor::updateUIState()
 {
-    bool isMusicGen = proc.modelType != "stable_audio";
-
-    temperatureSlider.setVisible (isMusicGen);
-    topKSlider.setVisible (isMusicGen);
-    guidanceSlider.setVisible (isMusicGen);
-
-    stepsSlider.setVisible (! isMusicGen);
-    cfgScaleSlider.setVisible (! isMusicGen);
-    samplerSelector.setVisible (! isMusicGen);
-
-    durationSlider.setVisible (! proc.useBarsMode);
-    durationLabel.setVisible (! proc.useBarsMode);
-    barsSlider.setVisible (proc.useBarsMode);
-    barsLabel.setVisible (proc.useBarsMode);
-
-    bpmSlider.setVisible (! proc.useDawBpm);
-    bpmLabel.setVisible (! proc.useDawBpm);
-
-    seedSlider.setVisible (! randomSeedToggle.getToggleState());
-
-    bool fx = proc.fxEnabled;
-    compThresholdSlider.setVisible (fx);
-    compRatioSlider.setVisible (fx);
-    delayTimeSlider.setVisible (fx);
-    delayMixSlider.setVisible (fx);
-    reverbSizeSlider.setVisible (fx);
-    reverbMixSlider.setVisible (fx);
-
+    bool mg = modelSelector.getSelectedId() != 2;
+    temperatureSlider.setVisible (mg); topKSlider.setVisible (mg); guidanceSlider.setVisible (mg);
+    stepsSlider.setVisible (! mg); cfgScaleSlider.setVisible (! mg); samplerSelector.setVisible (! mg);
+    durationSlider.setVisible (! barsModeToggle.getToggleState());
+    durationLabel.setVisible (! barsModeToggle.getToggleState());
+    barsSlider.setVisible (barsModeToggle.getToggleState());
+    barsLabel.setVisible (barsModeToggle.getToggleState());
+    bpmSlider.setVisible (! dawBpmToggle.getToggleState());
+    bpmLabel.setVisible (! dawBpmToggle.getToggleState());
+    bool fx = fxToggle.getToggleState();
+    compThresholdSlider.setVisible (fx); compRatioSlider.setVisible (fx);
+    delayTimeSlider.setVisible (fx); delayMixSlider.setVisible (fx);
+    reverbSizeSlider.setVisible (fx); reverbMixSlider.setVisible (fx);
     resized();
 }
 
 void MLXAudioGenEditor::timerCallback()
 {
     displayProgress = proc.getProgress();
-
     bool gen = proc.isGenerating();
     generateButton.setEnabled (! gen);
-    generateButton.setButtonText (gen
-        ? juce::String ("Generating ") + juce::String ((int) (displayProgress * 100)) + "%"
-        : "Generate");
-
+    generateButton.setButtonText (gen ? juce::String ("Generating ") + juce::String ((int) (displayProgress * 100)) + "%" : "Generate");
     playButton.setEnabled (proc.hasAudioLoaded());
     stopButton.setEnabled (proc.hasAudioLoaded());
     exportAudioButton.setEnabled (proc.hasAudioLoaded());
     playButton.setButtonText (proc.isPlaying() ? "Pause" : "Play");
-
     statusLabel.setText (proc.getStatusMessage(), juce::dontSendNotification);
+    bpmDisplay.setText (juce::String ((int) proc.getEffectiveBpm()) + " BPM", juce::dontSendNotification);
 
-    // BPM display
-    float bpm = proc.getEffectiveBpm();
-    bpmDisplay.setText (juce::String ((int) bpm) + " BPM", juce::dontSendNotification);
-
-    // Trim info
-    if (proc.hasAudioLoaded())
-    {
-        float totalBeats = proc.getTotalBeats();
-        trimStartSlider.setRange (0, (double) totalBeats, 0.25);
-        trimEndSlider.setRange (0, (double) totalBeats, 0.25);
-        if (trimEndSlider.getValue() == 0.0)
-            trimEndSlider.setValue (totalBeats, juce::dontSendNotification);
-
-        float startBeats = (float) trimStartSlider.getValue();
-        float endBeats = (float) trimEndSlider.getValue();
-        float trimDur = (endBeats - startBeats) * 60.0f / proc.getEffectiveBpm();
-        trimInfoLabel.setText (
-            juce::String (startBeats, 2) + " → " + juce::String (endBeats, 2)
-            + " beats (" + juce::String (trimDur, 3) + "s)",
+    if (proc.hasAudioLoaded()) {
+        float tb = proc.getTotalBeats();
+        trimStartSlider.setRange (0, (double) tb, 0.25);
+        trimEndSlider.setRange (0, (double) tb, 0.25);
+        if (trimEndSlider.getValue() == 0.0) trimEndSlider.setValue (tb, juce::dontSendNotification);
+        float dur = ((float) trimEndSlider.getValue() - (float) trimStartSlider.getValue()) * 60.0f / proc.getEffectiveBpm();
+        trimInfoLabel.setText (juce::String ((float) trimStartSlider.getValue(), 2) + " → "
+            + juce::String ((float) trimEndSlider.getValue(), 2) + " beats (" + juce::String (dur, 3) + "s)",
             juce::dontSendNotification);
     }
-
     trimButton.setEnabled (proc.hasAudioLoaded());
-    trimStartSlider.setEnabled (proc.hasAudioLoaded());
-    trimEndSlider.setEnabled (proc.hasAudioLoaded());
 
     auto err = proc.getLastError();
     errorLabel.setText (err, juce::dontSendNotification);
     errorLabel.setVisible (err.isNotEmpty());
-
     repaint();
 }
 
-void MLXAudioGenEditor::onGenerateClicked()
-{
-    proc.triggerGeneration();
-}
+void MLXAudioGenEditor::onGenerateClicked() { proc.triggerGeneration(); }
