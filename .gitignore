@@ -39,3 +39,7 @@ uv.lock
 web/node_modules/
 web/dist/
 web/*.tsbuildinfo
+
+# JUCE plugin build
+plugin/build/
+plugin/JUCE/

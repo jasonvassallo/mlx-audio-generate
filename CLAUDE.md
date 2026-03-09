@@ -63,6 +63,11 @@ cd web && npm install && npm run dev   # → http://localhost:3000
 # Build Web UI for production (served by FastAPI at http://localhost:8420/)
 cd web && npm run build
 
+# Build JUCE plugin (VST3 + AU + Standalone)
+cd plugin && git submodule update --init  # first time: clone JUCE
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release
+# Installs to ~/Library/Audio/Plug-Ins/{VST3,Components}/
+
 # Quick import smoke test (no weights needed)
 uv run python -c "from mlx_audiogen.models.musicgen import MusicGenPipeline; print('OK')"
 ```
@@ -100,6 +105,13 @@ web/                    # React + Vite + TypeScript SPA (dark/pro audio UI)
 │   └── types/api.ts    # TypeScript types mirroring server Pydantic models
 ├── package.json        # Volta-pinned Node 22 + npm 10
 └── vite.config.ts      # Dev proxy to :8420, Tailwind CSS v4
+plugin/                 # JUCE native VST3/AU plugin
+├── CMakeLists.txt      # Build config (VST3 + AU + Standalone)
+├── JUCE/               # JUCE framework (git submodule)
+└── Source/
+    ├── PluginProcessor.h/cpp  # Audio processor + async HTTP generation
+    ├── PluginEditor.h/cpp     # Dark-themed DAW UI
+    └── HttpClient.h/cpp       # HTTP client for server communication
 m4l/
 └── mlx-audiogen.js   # Node for Max HTTP client for Ableton Live integration
 ```
