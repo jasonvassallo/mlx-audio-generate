@@ -105,6 +105,16 @@ MLXAudioGenProcessor::createParameterLayout()
         juce::ParameterID ("reverbMix", 1), "Reverb Mix",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f));
 
+    // Output gain (dB)
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("outputGain", 1), "Output Gain",
+        juce::NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f));
+
+    // Crossfade loop (ms)
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID ("loopFade", 1), "Loop Crossfade",
+        juce::NormalisableRange<float> (0.0f, 50.0f, 1.0f), 10.0f));
+
     return { params.begin(), params.end() };
 }
 
@@ -233,8 +243,45 @@ void MLXAudioGenProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         pos = looping ? pos % totalSamples : totalSamples;
     playbackPosition.store (pos);
 
+    // Crossfade at loop point to eliminate clicks
+    float fadeMs = PARAM_FLOAT ("loopFade");
+    if (looping && fadeMs > 0.0f && totalSamples > 0)
+    {
+        int fadeSamples = (int) (fadeMs * 0.001f * (float) currentSampleRate);
+        fadeSamples = juce::jmin (fadeSamples, totalSamples / 4);
+        int curPos = playbackPosition.load();
+
+        // Fade out near end of buffer
+        if (curPos >= totalSamples - fadeSamples && curPos < totalSamples)
+        {
+            int distFromEnd = totalSamples - (curPos - numSamples);
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            {
+                auto* d = buffer.getWritePointer (ch);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    int sampleDist = distFromEnd - i;
+                    if (sampleDist >= 0 && sampleDist < fadeSamples)
+                    {
+                        float fade = (float) sampleDist / (float) fadeSamples;
+                        d[i] *= fade;
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply effects chain
     if (PARAM_BOOL ("fxEnabled"))
         applyEffects (buffer);
+
+    // Output gain
+    float gainDb = PARAM_FLOAT ("outputGain");
+    if (std::abs (gainDb) > 0.05f)
+    {
+        float gain = std::pow (10.0f, gainDb / 20.0f);
+        buffer.applyGain (gain);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -460,9 +507,10 @@ void MLXAudioGenProcessor::runGeneration()
                         playbackPosition.store (0);
                         hasAudio.store (true);
                         playing.store (true);
+                        pendingDecision.store (true);
                         float dur = (float) rd->lengthInSamples / (float) rd->sampleRate;
                         { juce::ScopedLock lock (stateLock);
-                          statusMessage = "Ready — " + juce::String (dur, 1) + "s"; }
+                          statusMessage = "Preview — Keep or Discard? (" + juce::String (dur, 1) + "s)"; }
                     }
                     else
                     { juce::ScopedLock lock (stateLock); lastError = "WAV decode failed"; statusMessage = "Error"; }
@@ -587,6 +635,83 @@ void MLXAudioGenProcessor::exportAudio (const juce::File& file)
                              (unsigned int) generatedAudio.getNumChannels(), 32, {}, 0));
     if (writer)
         writer->writeFromAudioSampleBuffer (generatedAudio, 0, generatedAudio.getNumSamples());
+}
+
+// ---------------------------------------------------------------------------
+// Keep / Discard workflow
+// ---------------------------------------------------------------------------
+
+juce::File MLXAudioGenProcessor::writeTempAudio()
+{
+    if (! hasAudio.load() || generatedAudio.getNumSamples() == 0)
+        return {};
+
+    auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                       .getChildFile ("mlx-audiogen");
+    tempDir.createDirectory();
+
+    auto ts = juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S");
+    auto name = instanceName.replaceCharacter (' ', '_') + "_" + ts + ".wav";
+    auto file = tempDir.getChildFile (name);
+
+    exportAudio (file);
+    lastTempFile = file;
+    return file;
+}
+
+juce::File MLXAudioGenProcessor::keepAudio()
+{
+    if (! hasAudio.load()) return {};
+
+    juce::File dest;
+
+    if (exportFolder.isNotEmpty())
+    {
+        auto dir = juce::File (exportFolder);
+        if (dir.isDirectory())
+        {
+            auto ts = juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S");
+            auto name = instanceName.replaceCharacter (' ', '_') + "_" + ts + ".wav";
+            dest = dir.getChildFile (name);
+        }
+    }
+
+    if (dest == juce::File())
+    {
+        // Fall back to temp directory
+        dest = writeTempAudio();
+    }
+    else
+    {
+        exportAudio (dest);
+    }
+
+    pendingDecision.store (false);
+
+    {
+        juce::ScopedLock lock (stateLock);
+        statusMessage = "Saved: " + dest.getFileName();
+    }
+
+    return dest;
+}
+
+void MLXAudioGenProcessor::discardAudio()
+{
+    playing.store (false);
+    hasAudio.store (false);
+    playbackPosition.store (0);
+    generatedAudio.setSize (0, 0);
+    pendingDecision.store (false);
+
+    // Clean up temp file
+    if (lastTempFile.existsAsFile())
+        lastTempFile.deleteFile();
+
+    {
+        juce::ScopedLock lock (stateLock);
+        statusMessage = "Discarded";
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -84,6 +84,18 @@ public:
     /** Get effective duration in seconds (accounting for bar mode). */
     float getEffectiveSeconds() const;
 
+    // --- Keep / Discard workflow ---
+    /** Save current audio to export folder (or temp dir). Returns the file path. */
+    juce::File keepAudio();
+    /** Discard current audio — clears the buffer. */
+    void discardAudio();
+    /** Whether audio is pending keep/discard decision. */
+    bool isPendingDecision() const { return pendingDecision.load(); }
+
+    // --- Drag-and-drop ---
+    /** Write current audio to a temp file for drag operations. Returns path. */
+    juce::File writeTempAudio();
+
     // --- Preset / Export ---
     void savePreset (const juce::File& file);
     void loadPreset (const juce::File& file);
@@ -104,6 +116,7 @@ private:
     std::atomic<int> playbackPosition { 0 };
     std::atomic<bool> hasAudio { false };
     std::atomic<bool> playing { false };
+    std::atomic<bool> pendingDecision { false };
     double currentSampleRate { 44100.0 };
     float dawBpm { 120.0f };
 
@@ -119,6 +132,7 @@ private:
     // DSP
     juce::dsp::DelayLine<float> delayLine { 48000 };
     juce::dsp::Reverb reverb;
+    juce::File lastTempFile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MLXAudioGenProcessor)
 };

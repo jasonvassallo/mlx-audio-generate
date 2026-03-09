@@ -5,7 +5,8 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 class MLXAudioGenEditor : public juce::AudioProcessorEditor,
-                           private juce::Timer
+                           private juce::Timer,
+                           public juce::DragAndDropContainer
 {
 public:
     explicit MLXAudioGenEditor (MLXAudioGenProcessor&);
@@ -54,6 +55,12 @@ private:
     // Transport
     juce::TextButton generateButton { "Generate" };
     juce::TextButton playButton { "Play" }, stopButton { "Stop" };
+    juce::TextButton keepButton { "Keep" }, discardButton { "Discard" };
+    juce::TextButton dragButton { "Drag to DAW" };
+
+    // Output gain
+    juce::Slider outputGainSlider;
+    juce::Slider loopFadeSlider;
     juce::ToggleButton loopToggle { "Loop" };
     juce::ToggleButton midiTriggerToggle { "MIDI Trigger" };
 
@@ -95,6 +102,7 @@ private:
     std::unique_ptr<SliderAttach> compTAttach, compRAttach;
     std::unique_ptr<SliderAttach> delayTAttach, delayMxAttach;
     std::unique_ptr<SliderAttach> revSizeAttach, revMixAttach;
+    std::unique_ptr<SliderAttach> gainAttach, fadeAttach;
 
     // Colours
     static constexpr juce::uint32 bgColour       = 0xFF0A0A0A;

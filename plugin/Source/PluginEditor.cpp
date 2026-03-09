@@ -39,7 +39,7 @@ static const juce::StringArray KEY_OPTIONS = {
 MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
 {
-    setSize (520, 900);
+    setSize (520, 950);
 
     // Instance name
     instanceNameInput.setColour (juce::TextEditor::backgroundColourId, juce::Colour (bgColour));
@@ -158,6 +158,36 @@ MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     addAndMakeVisible (playButton);
     styleBtn (stopButton); stopButton.onClick = [this] { proc.stopPlayback(); };
     addAndMakeVisible (stopButton);
+
+    // Keep / Discard
+    keepButton.setColour (juce::TextButton::buttonColourId, juce::Colour (successColour));
+    keepButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xFF0A0A0A));
+    keepButton.onClick = [this] { proc.keepAudio(); };
+    addAndMakeVisible (keepButton);
+
+    discardButton.setColour (juce::TextButton::buttonColourId, juce::Colour (errorColourVal));
+    discardButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xFF0A0A0A));
+    discardButton.onClick = [this] { proc.discardAudio(); };
+    addAndMakeVisible (discardButton);
+
+    // Drag to DAW
+    styleBtn (dragButton);
+    dragButton.onClick = [this] {
+        auto file = proc.writeTempAudio();
+        if (file.existsAsFile())
+        {
+            performExternalDragDropOfFiles (
+                juce::StringArray { file.getFullPathName() }, false, this);
+        }
+    };
+    addAndMakeVisible (dragButton);
+
+    // Output gain + loop crossfade
+    styleSlider (outputGainSlider); addAndMakeVisible (outputGainSlider);
+    gainAttach = std::make_unique<SliderAttach> (proc.apvts, "outputGain", outputGainSlider);
+
+    styleSlider (loopFadeSlider); addAndMakeVisible (loopFadeSlider);
+    fadeAttach = std::make_unique<SliderAttach> (proc.apvts, "loopFade", loopFadeSlider);
 
     // Effects
     styleToggle (fxToggle); addAndMakeVisible (fxToggle);
@@ -404,9 +434,18 @@ void MLXAudioGenEditor::resized()
 
     generateButton.setBounds (area.removeFromTop (30)); area.removeFromTop (gap);
     auto tr = area.removeFromTop (26);
-    playButton.setBounds (tr.removeFromLeft (70)); tr.removeFromLeft (4);
-    stopButton.setBounds (tr.removeFromLeft (70));
+    playButton.setBounds (tr.removeFromLeft (60)); tr.removeFromLeft (3);
+    stopButton.setBounds (tr.removeFromLeft (50)); tr.removeFromLeft (3);
+    keepButton.setBounds (tr.removeFromLeft (55)); tr.removeFromLeft (3);
+    discardButton.setBounds (tr.removeFromLeft (60)); tr.removeFromLeft (3);
+    dragButton.setBounds (tr);
     area.removeFromTop (gap);
+
+    // Output gain + loop crossfade
+    auto gainRow = area.removeFromTop (rh); gainRow.removeFromLeft (lw);
+    outputGainSlider.setBounds (gainRow); area.removeFromTop (3);
+    auto fadeRow = area.removeFromTop (rh); fadeRow.removeFromLeft (lw);
+    loopFadeSlider.setBounds (fadeRow); area.removeFromTop (gap);
 
     // Trim
     auto t1 = area.removeFromTop (rh); t1.removeFromLeft (lw); trimStartSlider.setBounds (t1); area.removeFromTop (3);
@@ -461,9 +500,16 @@ void MLXAudioGenEditor::timerCallback()
     bool gen = proc.isGenerating();
     generateButton.setEnabled (! gen);
     generateButton.setButtonText (gen ? juce::String ("Generating ") + juce::String ((int) (displayProgress * 100)) + "%" : "Generate");
-    playButton.setEnabled (proc.hasAudioLoaded());
-    stopButton.setEnabled (proc.hasAudioLoaded());
-    exportAudioButton.setEnabled (proc.hasAudioLoaded());
+    bool audio = proc.hasAudioLoaded();
+    bool pending = proc.isPendingDecision();
+    playButton.setEnabled (audio);
+    stopButton.setEnabled (audio);
+    exportAudioButton.setEnabled (audio && ! pending);
+    keepButton.setVisible (pending);
+    discardButton.setVisible (pending);
+    keepButton.setEnabled (pending);
+    discardButton.setEnabled (pending);
+    dragButton.setEnabled (audio);
     playButton.setButtonText (proc.isPlaying() ? "Pause" : "Play");
     statusLabel.setText (proc.getStatusMessage(), juce::dontSendNotification);
     bpmDisplay.setText (juce::String ((int) proc.getEffectiveBpm()) + " BPM", juce::dontSendNotification);
