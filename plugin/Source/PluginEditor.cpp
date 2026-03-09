@@ -49,7 +49,16 @@ static const juce::StringArray KEY_OPTIONS = {
 MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
 {
-    setSize (520, 700);
+    setSize (520, 720);
+
+    // Instance name
+    instanceNameInput.setColour (juce::TextEditor::backgroundColourId, juce::Colour (bgColour));
+    instanceNameInput.setColour (juce::TextEditor::textColourId, juce::Colour (textColour));
+    instanceNameInput.setColour (juce::TextEditor::outlineColourId, juce::Colour (0x00000000));
+    instanceNameInput.setFont (juce::Font (14.0f, juce::Font::bold));
+    instanceNameInput.setText (proc.instanceName);
+    instanceNameInput.onTextChange = [this] { proc.instanceName = instanceNameInput.getText(); };
+    addAndMakeVisible (instanceNameInput);
 
     // Model selector
     modelSelector.addItem ("MusicGen", 1);
@@ -343,6 +352,10 @@ void MLXAudioGenEditor::resized()
     const int rowH = 22;
     const int gap = 5;
     const int labelW = 75;
+
+    // Instance name
+    instanceNameInput.setBounds (area.removeFromTop (22));
+    area.removeFromTop (3);
 
     // Model selector
     modelSelector.setBounds (area.removeFromTop (26));

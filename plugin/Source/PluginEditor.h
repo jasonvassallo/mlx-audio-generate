@@ -28,6 +28,9 @@ private:
 
     MLXAudioGenProcessor& proc;
 
+    // --- Instance name ---
+    juce::TextEditor instanceNameInput;
+
     // --- Model & Prompt ---
     juce::ComboBox modelSelector;
     juce::TextEditor promptInput;

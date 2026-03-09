@@ -416,6 +416,7 @@ void MLXAudioGenProcessor::timerCallback() {}
 void MLXAudioGenProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto* obj = new juce::DynamicObject();
+    obj->setProperty ("instanceName", instanceName);
     obj->setProperty ("model", modelType);
     obj->setProperty ("prompt", prompt);
     obj->setProperty ("negativePrompt", negativePrompt);
@@ -458,6 +459,8 @@ void MLXAudioGenProcessor::setStateInformation (const void* data, int sizeInByte
 
     if (auto* obj = parsed.getDynamicObject())
     {
+        instanceName = obj->getProperty ("instanceName").toString();
+        if (instanceName.isEmpty()) instanceName = "MLX AudioGen";
         modelType = obj->getProperty ("model").toString();
         prompt = obj->getProperty ("prompt").toString();
         negativePrompt = obj->getProperty ("negativePrompt").toString();

@@ -247,6 +247,26 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/jobs")
+def list_jobs() -> list[JobInfo]:
+    """List all active and recent jobs (for multi-instance monitoring)."""
+    return [
+        JobInfo(
+            id=job.id,
+            status=job.status,
+            model=job.request.model,
+            prompt=job.request.prompt,
+            seconds=job.request.seconds,
+            created_at=job.created_at,
+            completed_at=job.completed_at,
+            error=job.error,
+            sample_rate=job.sample_rate,
+            progress=job.progress,
+        )
+        for job in _jobs.values()
+    ]
+
+
 @app.get("/api/models")
 def list_models() -> list[ModelInfo]:
     """List available models and their loading status."""

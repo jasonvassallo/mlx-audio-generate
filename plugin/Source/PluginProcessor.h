@@ -59,6 +59,9 @@ public:
     // --- Audio buffer access (for waveform drawing) ---
     const juce::AudioBuffer<float>& getGeneratedAudio() const { return generatedAudio; }
 
+    // --- Instance identity (for multi-instance) ---
+    juce::String instanceName { "MLX AudioGen" };
+
     // --- Parameters ---
     juce::String prompt;
     juce::String negativePrompt;
