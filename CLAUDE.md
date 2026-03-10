@@ -83,7 +83,11 @@ mlx_audiogen/
 │   ├── encodec.py    # EnCodec audio codec (used by MusicGen, inlined from mlx-examples)
 │   ├── hub.py        # HuggingFace download + safetensors/pytorch_model.bin I/O
 │   ├── mlx_utils.py  # Conv weight transposition, weight norm fusion
-│   └── audio_io.py   # WAV load/save/play
+│   ├── audio_io.py   # WAV load/save/play
+│   ├── audio_to_midi.py  # Audio-to-MIDI transcription (onset detection + pitch estimation)
+│   ├── midi_to_prompt.py # MIDI-to-text prompt generation (key estimation, range analysis)
+│   ├── prompt_suggestions.py # AI prompt refinement (template engine + LLM hook)
+│   └── stem_separator.py    # Stem separation (FFT band-split + Demucs hook)
 ├── models/
 │   ├── musicgen/     # Autoregressive: T5 -> transformer decoder -> EnCodec decode
 │   │   ├── config.py, transformer.py, model.py, pipeline.py, convert.py
@@ -141,10 +145,19 @@ m4l/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/generate` | Submit generation request (returns job ID) |
-| `GET` | `/api/status/{id}` | Poll job status (`queued`/`running`/`done`/`error`) |
+| `POST` | `/api/generate` | Submit generation request (returns job ID). Supports `output_mode`: `audio`, `midi`, or `both` |
+| `GET` | `/api/status/{id}` | Poll job status (`queued`/`running`/`done`/`error`) with real-time `progress` (0.0-1.0) |
 | `GET` | `/api/audio/{id}` | Download generated WAV |
+| `GET` | `/api/midi/{id}` | Download generated MIDI (when `output_mode` is `midi` or `both`) |
 | `GET` | `/api/models` | List available models and loading status |
+| `GET` | `/api/jobs` | List all active/recent jobs (multi-instance monitoring) |
+| `GET` | `/api/health` | Health check for browser heartbeat |
+| `POST` | `/api/suggest` | AI prompt suggestions (analyze prompt + return refined versions) |
+| `POST` | `/api/midi-to-prompt` | Convert MIDI file to descriptive text prompt |
+| `POST` | `/api/separate/{id}` | Separate audio into stems (bass/mid/high or drums/bass/vocals/other) |
+| `GET` | `/api/presets` | List shared presets from `~/.mlx-audiogen/presets/` |
+| `POST` | `/api/presets/{name}` | Save a preset to the shared directory |
+| `GET` | `/api/presets/{name}` | Load a preset by name |
 
 Interactive API docs at `http://localhost:8420/docs` when running.
 
