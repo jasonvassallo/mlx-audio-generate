@@ -17,10 +17,26 @@ export interface GenerateRequest {
   sampler?: "euler" | "rk4";
   // General
   seed?: number | null;
+  // Output mode
+  output_mode?: "audio" | "midi" | "both";
   // Conditioning paths (MusicGen only)
   melody_path?: string | null;
   style_audio_path?: string | null;
   style_coef?: number;
+}
+
+/** Prompt analysis result from /api/suggest. */
+export interface PromptAnalysis {
+  genres: string[];
+  moods: string[];
+  instruments: string[];
+  missing: string[];
+  suggestions: string[];
+}
+
+/** Stem separation result from /api/separate/{id}. */
+export interface StemResult {
+  stems: Record<string, string>; // stem_name -> job_id
 }
 
 /** Matches server's GenerateResponse. */

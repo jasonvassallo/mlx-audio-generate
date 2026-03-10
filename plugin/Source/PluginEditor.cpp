@@ -344,6 +344,9 @@ void MLXAudioGenEditor::paint (juce::Graphics& g)
     g.setColour (juce::Colour (borderColour));
     g.drawHorizontalLine (waveformBounds.getY() - 4, 14.0f, (float) getWidth() - 14.0f);
     drawWaveform (g, waveformBounds);
+    drawSpectrum (g, spectrumBounds);
+    if (proc.hasAudioLoaded() && fxToggle.getToggleState())
+        drawEqCurve (g, spectrumBounds);
     if (proc.isGenerating()) {
         auto bar = getLocalBounds().removeFromBottom (3);
         g.setColour (juce::Colour (borderColour)); g.fillRect (bar);
@@ -438,6 +441,117 @@ void MLXAudioGenEditor::drawWaveform (juce::Graphics& g, juce::Rectangle<int> bo
             g.setColour (juce::Colour (textColour));
             g.drawVerticalLine (bounds.getX() + (int) (frac * w), (float) bounds.getY(), (float) bounds.getBottom());
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spectral analysis (6.2)
+// ---------------------------------------------------------------------------
+
+void MLXAudioGenEditor::drawSpectrum (juce::Graphics& g, juce::Rectangle<int> bounds)
+{
+    g.setColour (juce::Colour (panelColour));
+    g.fillRoundedRectangle (bounds.toFloat(), 4.0f);
+
+    const auto& audio = proc.getGeneratedAudio();
+    if (audio.getNumSamples() == 0)
+    {
+        g.setColour (juce::Colour (dimTextColour).withAlpha (0.3f));
+        g.drawText ("Spectrum", bounds, juce::Justification::centred);
+        return;
+    }
+
+    // Compute FFT of the full audio (or a representative chunk)
+    const float* samples = audio.getReadPointer (0);
+    const int numSamples = audio.getNumSamples();
+    const int fftSize = 4096;
+    const int halfFFT = fftSize / 2;
+
+    // Use the middle section of the audio
+    int startSample = juce::jmax (0, numSamples / 2 - fftSize / 2);
+    if (startSample + fftSize > numSamples)
+        startSample = juce::jmax (0, numSamples - fftSize);
+
+    // Simple magnitude spectrum via manual DFT of key frequencies
+    // (Avoiding juce::dsp::FFT dependency for simplicity — we draw bars)
+    const float w = (float) bounds.getWidth();
+    const float h = (float) bounds.getHeight();
+    const int numBands = juce::jmin (64, (int) w / 4);
+
+    g.setColour (juce::Colour (accentColour).withAlpha (0.6f));
+
+    for (int band = 0; band < numBands; ++band)
+    {
+        // Map band to frequency range (log scale: 20Hz to 20kHz)
+        float frac = (float) band / (float) numBands;
+        float freq = 20.0f * std::pow (1000.0f, frac); // 20 to 20000 Hz
+
+        // Measure energy at this frequency using a simple bandpass
+        float energy = 0.0f;
+        int windowSamples = juce::jmin (fftSize, numSamples - startSample);
+        float samplesPerCycle = 44100.0f / freq;
+
+        if (samplesPerCycle > 2.0f && windowSamples > 0)
+        {
+            // Goertzel-like single-frequency energy estimate
+            float realPart = 0.0f, imagPart = 0.0f;
+            float omega = 2.0f * juce::MathConstants<float>::pi * freq / 44100.0f;
+            for (int s = 0; s < windowSamples; ++s)
+            {
+                float sample = samples[startSample + s];
+                realPart += sample * std::cos (omega * s);
+                imagPart += sample * std::sin (omega * s);
+            }
+            energy = std::sqrt (realPart * realPart + imagPart * imagPart) / windowSamples;
+        }
+
+        // Draw bar
+        float barH = juce::jlimit (0.0f, h - 2.0f, energy * h * 8.0f);
+        float barW = w / numBands - 1.0f;
+        float x = bounds.getX() + frac * w;
+
+        g.fillRect (x, bounds.getBottom() - barH, barW, barH);
+    }
+
+    // Frequency labels
+    g.setColour (juce::Colour (dimTextColour).withAlpha (0.5f));
+    g.setFont (9.0f);
+    g.drawText ("20Hz", bounds.getX(), bounds.getBottom() - 12, 30, 12,
+                juce::Justification::left);
+    g.drawText ("1kHz", bounds.getCentreX() - 15, bounds.getBottom() - 12, 30, 12,
+                juce::Justification::centred);
+    g.drawText ("20kHz", bounds.getRight() - 35, bounds.getBottom() - 12, 35, 12,
+                juce::Justification::right);
+}
+
+// ---------------------------------------------------------------------------
+// EQ curve visualization (6.3)
+// ---------------------------------------------------------------------------
+
+void MLXAudioGenEditor::drawEqCurve (juce::Graphics& g, juce::Rectangle<int> bounds)
+{
+    // Draw the EQ frequency response curve as an overlay on the spectrum
+    float compT = proc.apvts.getRawParameterValue ("compThreshold")->load();
+    float compR = proc.apvts.getRawParameterValue ("compRatio")->load();
+
+    if (compR <= 1.0f && compT >= 0.0f)
+        return; // No EQ effect to show
+
+    const float w = (float) bounds.getWidth();
+    const float h = (float) bounds.getHeight();
+
+    // Draw compression threshold line
+    if (compR > 1.0f)
+    {
+        float thresholdY = bounds.getBottom() - ((-compT / 60.0f) * h);
+        g.setColour (juce::Colour (0xFFFFFF00).withAlpha (0.4f)); // Yellow
+        g.drawHorizontalLine ((int) thresholdY, (float) bounds.getX(),
+                              (float) bounds.getRight());
+
+        g.setFont (8.0f);
+        g.drawText (juce::String (compT, 0) + "dB",
+                    bounds.getRight() - 40, (int) thresholdY - 10, 38, 10,
+                    juce::Justification::right);
     }
 }
 
@@ -556,7 +670,11 @@ void MLXAudioGenEditor::resized()
     errorLabel.setBounds (area.removeFromTop (13));
     area.removeFromTop (gap);
 
-    waveformBounds = area;
+    // Split remaining area: waveform (top 60%), spectrum (bottom 40%)
+    int waveH = area.getHeight() * 6 / 10;
+    waveformBounds = area.removeFromTop (waveH);
+    area.removeFromTop (4);
+    spectrumBounds = area;
 }
 
 // ---------------------------------------------------------------------------

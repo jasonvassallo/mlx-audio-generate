@@ -3,6 +3,8 @@ import type {
   GenerateResponse,
   JobInfo,
   ModelInfo,
+  PromptAnalysis,
+  StemResult,
 } from "../types/api";
 
 /**
@@ -50,4 +52,27 @@ export function fetchJobStatus(jobId: string): Promise<JobInfo> {
 /** Get the URL for downloading generated audio. */
 export function getAudioUrl(jobId: string): string {
   return `${BASE}/audio/${jobId}`;
+}
+
+/** Get the URL for downloading generated MIDI. */
+export function getMidiUrl(jobId: string): string {
+  return `${BASE}/midi/${jobId}`;
+}
+
+/** Get AI prompt suggestions. */
+export function suggestPrompts(
+  prompt: string,
+  count = 4,
+): Promise<PromptAnalysis> {
+  return request<PromptAnalysis>("/suggest", {
+    method: "POST",
+    body: JSON.stringify({ prompt, count }),
+  });
+}
+
+/** Separate a job's audio into stems. */
+export function separateStems(jobId: string): Promise<StemResult> {
+  return request<StemResult>(`/separate/${jobId}`, {
+    method: "POST",
+  });
 }

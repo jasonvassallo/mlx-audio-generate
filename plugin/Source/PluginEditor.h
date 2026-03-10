@@ -21,6 +21,8 @@ private:
     void updateUIState();
     void onGenerateClicked();
     void drawWaveform (juce::Graphics& g, juce::Rectangle<int> bounds);
+    void drawSpectrum (juce::Graphics& g, juce::Rectangle<int> bounds);
+    void drawEqCurve (juce::Graphics& g, juce::Rectangle<int> bounds);
 
     MLXAudioGenProcessor& proc;
 
@@ -90,6 +92,7 @@ private:
 
     juce::Label statusLabel, errorLabel;
     juce::Rectangle<int> waveformBounds;
+    juce::Rectangle<int> spectrumBounds;
     float displayProgress { 0.0f };
 
     // Waveform zoom/scroll (5.9)

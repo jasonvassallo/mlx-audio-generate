@@ -294,6 +294,148 @@ def list_models() -> list[ModelInfo]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Prompt AI Endpoints (Phase 6.1 + 6.5)
+# ---------------------------------------------------------------------------
+
+
+class PromptSuggestRequest(BaseModel):
+    """Request for prompt suggestions."""
+
+    prompt: str = Field(..., min_length=1, max_length=5000)
+    count: int = Field(default=4, ge=1, le=10)
+
+
+class MidiToPromptRequest(BaseModel):
+    """Request for MIDI-to-prompt conversion."""
+
+    midi_path: str = Field(..., max_length=1024)
+
+
+@app.post("/api/suggest")
+def suggest_prompts(req: PromptSuggestRequest) -> dict:
+    """Generate refined prompt suggestions from a base prompt."""
+    from mlx_audiogen.shared.prompt_suggestions import analyze_prompt
+
+    analysis = analyze_prompt(req.prompt)
+    return analysis
+
+
+@app.post("/api/midi-to-prompt")
+def midi_to_prompt(req: MidiToPromptRequest) -> dict:
+    """Analyze a MIDI file and generate a descriptive prompt."""
+    from mlx_audiogen.shared.midi_to_prompt import midi_to_prompt as m2p
+
+    path = Path(req.midi_path)
+    if not path.is_file():
+        raise HTTPException(400, f"MIDI file not found: {req.midi_path}")
+    if path.suffix.lower() not in (".mid", ".midi"):
+        raise HTTPException(400, "File must be .mid or .midi")
+
+    midi_bytes = path.read_bytes()
+    prompt = m2p(midi_bytes)
+    return {"prompt": prompt, "path": str(path)}
+
+
+@app.post("/api/separate/{job_id}")
+def separate_stems(job_id: str) -> dict:
+    """Separate a completed job's audio into stems.
+
+    Returns download URLs for each stem (bass, mid, high — or
+    drums, bass, vocals, other if Demucs is available).
+    """
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"Job not found: {job_id}")
+    if job.status != JobStatus.DONE or job.audio is None:
+        raise HTTPException(400, "Job not complete or no audio")
+
+    from mlx_audiogen.shared.stem_separator import encode_stems_wav, separate
+
+    stems = separate(job.audio, job.sample_rate or 32000)
+    wav_stems = encode_stems_wav(stems, job.sample_rate or 32000)
+
+    # Store stems as sub-jobs for download
+    stem_ids = {}
+    for stem_name, wav_bytes in wav_stems.items():
+        stem_id = f"{job_id}_stem_{stem_name}"
+        stem_job = _Job(stem_id, job.request)
+        stem_job.status = JobStatus.DONE
+        stem_job.completed_at = time.time()
+        stem_job.sample_rate = job.sample_rate
+        stem_job.channels = 1
+        # Store WAV bytes directly — decode back to numpy for the job
+        import soundfile as sf
+
+        audio_data, _sr = sf.read(io.BytesIO(wav_bytes))
+        stem_job.audio = np.array(audio_data, dtype=np.float32)
+        _jobs[stem_id] = stem_job
+        stem_ids[stem_name] = stem_id
+
+    return {"stems": stem_ids}
+
+
+# ---------------------------------------------------------------------------
+# Preset Marketplace (Phase 6.8)
+# ---------------------------------------------------------------------------
+
+_PRESETS_DIR = Path.home() / ".mlx-audiogen" / "presets"
+
+
+@app.get("/api/presets")
+def list_presets() -> list[dict]:
+    """List shared presets from ~/.mlx-audiogen/presets/."""
+    _PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    presets = []
+    for f in sorted(_PRESETS_DIR.glob("*.mlxpreset")):
+        import json as json_mod
+
+        try:
+            data = json_mod.loads(f.read_text())
+            presets.append(
+                {
+                    "name": f.stem,
+                    "filename": f.name,
+                    "prompt": data.get("prompt", ""),
+                    "model": data.get("model", ""),
+                }
+            )
+        except (json_mod.JSONDecodeError, OSError):
+            continue
+    return presets
+
+
+@app.post("/api/presets/{name}")
+def save_shared_preset(name: str, req: GenerateRequest) -> dict:
+    """Save a preset to the shared marketplace directory."""
+    import json as json_mod
+
+    _PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    # Sanitize name
+    safe_name = "".join(c for c in name if c.isalnum() or c in "._- ")[:100]
+    if not safe_name:
+        raise HTTPException(400, "Invalid preset name")
+
+    preset_file = _PRESETS_DIR / f"{safe_name}.mlxpreset"
+    preset_data = req.model_dump()
+    preset_file.write_text(json_mod.dumps(preset_data, indent=2))
+    return {"saved": safe_name, "path": str(preset_file)}
+
+
+@app.get("/api/presets/{name}")
+def load_shared_preset(name: str) -> dict:
+    """Load a preset from the shared marketplace directory."""
+    import json as json_mod
+
+    safe_name = "".join(c for c in name if c.isalnum() or c in "._- ")[:100]
+    preset_file = _PRESETS_DIR / f"{safe_name}.mlxpreset"
+    if not preset_file.is_file():
+        raise HTTPException(404, f"Preset not found: {safe_name}")
+
+    data = json_mod.loads(preset_file.read_text())
+    return data
+
+
 @app.post("/api/generate")
 def submit_generation(req: GenerateRequest) -> GenerateResponse:
     """Submit a generation request. Returns immediately with a job ID."""
