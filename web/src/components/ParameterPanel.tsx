@@ -55,6 +55,33 @@ export default function ParameterPanel() {
         )}
       </div>
 
+      {/* Output mode */}
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-text-secondary">
+          Output
+        </label>
+        <select
+          value={params.output_mode ?? "audio"}
+          onChange={(e) =>
+            setParam(
+              "output_mode",
+              e.target.value as "audio" | "midi" | "both",
+            )
+          }
+          disabled={isGenerating}
+          className="
+            w-full rounded border border-border bg-surface-2 px-2 py-1.5
+            text-xs text-text-primary
+            focus:border-accent focus:outline-none
+            disabled:opacity-50
+          "
+        >
+          <option value="audio">Audio only</option>
+          <option value="midi">MIDI only</option>
+          <option value="both">Audio + MIDI</option>
+        </select>
+      </div>
+
       <div className="border-t border-border pt-3">
         {params.model === "musicgen" ? (
           <MusicGenParams />
