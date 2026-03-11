@@ -317,7 +317,7 @@ def suggest_prompts(req: PromptSuggestRequest) -> dict:
     """Generate refined prompt suggestions from a base prompt."""
     from mlx_audiogen.shared.prompt_suggestions import analyze_prompt
 
-    analysis = analyze_prompt(req.prompt)
+    analysis = analyze_prompt(req.prompt, count=req.count)
     return analysis
 
 

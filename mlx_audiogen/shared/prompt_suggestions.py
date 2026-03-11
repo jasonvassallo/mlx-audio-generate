@@ -187,7 +187,7 @@ def suggest_refinements(
     return suggestions
 
 
-def analyze_prompt(prompt: str) -> dict:
+def analyze_prompt(prompt: str, count: int = 3) -> dict:
     """Analyze a prompt and return detected attributes.
 
     Returns:
@@ -216,5 +216,5 @@ def analyze_prompt(prompt: str) -> dict:
         "moods": detected_moods,
         "instruments": detected_instruments,
         "missing": missing,
-        "suggestions": suggest_refinements(prompt, count=3),
+        "suggestions": suggest_refinements(prompt, count=count),
     }
