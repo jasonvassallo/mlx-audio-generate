@@ -108,10 +108,17 @@ mlx_audiogen/
 │   └── convert.py    # Unified conversion: auto-detects model type from repo ID
 web/                    # React + Vite + TypeScript SPA (dark/pro audio UI)
 ├── src/
-│   ├── api/client.ts   # Typed fetch wrappers for all API endpoints
-│   ├── store/useStore.ts  # Zustand state: models, params, jobs, history
-│   ├── components/     # ModelSelector, PromptInput, ParameterPanel, AudioPlayer, etc.
-│   └── types/api.ts    # TypeScript types mirroring server Pydantic models
+│   ├── api/client.ts   # Typed fetch wrappers for all API endpoints (generate, suggest, presets, stems)
+│   ├── store/useStore.ts  # Zustand state: models, params, jobs, history, suggestions, presets, stems
+│   ├── components/
+│   │   ├── App.tsx          # Root layout with tabbed left panel (Generate/Suggest)
+│   │   ├── TabBar.tsx       # Reusable tab header with active/inactive styling
+│   │   ├── SuggestPanel.tsx # Prompt analysis tags + suggestion cards + preset save/load
+│   │   ├── ParameterPanel.tsx  # Model-aware sliders + output_mode dropdown (audio/midi/both)
+│   │   ├── HistoryPanel.tsx    # Job history + MIDI download + stem separation with color-coded players
+│   │   ├── Header.tsx       # Logo + nav + PayPal support link
+│   │   └── ...              # ModelSelector, PromptInput, GenerateButton, AudioPlayer, AudioDeviceSelector
+│   └── types/api.ts    # TypeScript types mirroring server Pydantic models (PresetInfo, StemResult, etc.)
 ├── package.json        # Volta-pinned Node 22 + npm 10
 └── vite.config.ts      # Dev proxy to :8420, Tailwind CSS v4
 plugin/                 # JUCE native VST3/AU plugin
@@ -176,9 +183,14 @@ Interactive API docs at `http://localhost:8420/docs` when running.
 - **Node management**: Volta pins Node 22 and npm 10 in `web/package.json`
 - **Dev mode**: `npm run dev` starts Vite on :3000, proxies `/api/*` to FastAPI on :8420
 - **Production**: `npm run build` outputs to `web/dist/`, served by FastAPI's static file mount
-- **Components**: ModelSelector, PromptInput, ParameterPanel (model-aware sliders), GenerateButton (with progress bar), AudioPlayer (Web Audio API waveform + `setSinkId` device selection), HistoryPanel, AudioDeviceSelector
-- **State**: Zustand store manages models, generation parameters, active job polling, and history
-- **API client**: Typed fetch wrappers in `src/api/client.ts` matching server Pydantic models
+- **Layout**: Tabbed left panel (Generate / Suggest tabs), right panel for history + audio playback
+- **Components**: TabBar (reusable tab header), SuggestPanel (prompt analysis + presets), ParameterPanel (model-aware sliders + output_mode dropdown), GenerateButton (with progress bar), AudioPlayer (Web Audio API waveform + `setSinkId` device selection), HistoryPanel (job history + MIDI download + stem separation), AudioDeviceSelector, Header (with PayPal support link)
+- **State**: Zustand store manages models, generation parameters, active job polling, history, prompt suggestions (with deduplication cache), presets, stem separation results (with eager blob download), output_mode, and active tab
+- **API client**: Typed fetch wrappers in `src/api/client.ts` for generate, suggest, presets, stems, MIDI, and model endpoints
+- **Prompt Suggestions**: `POST /api/suggest` returns analysis tags (genres, moods, instruments, missing elements) + refined prompt suggestions. UI shows colored tags + suggestion cards with Use/Copy buttons
+- **Presets**: Save/load `.mlxpreset` JSON files from `~/.mlx-audiogen/presets/`. UI validates names with `^[a-zA-Z0-9_-]{1,64}$` regex
+- **Stem Separation**: `POST /api/separate/{id}` splits audio into stems. UI shows color-coded inline `<audio>` players. Blob URLs eagerly downloaded to survive server's 5-minute job cleanup
+- **MIDI Output**: `output_mode` dropdown (audio/midi/both) in ParameterPanel. History shows MIDI download button when available
 - **Audio output**: Web Audio API plays through system default; AudioDeviceSelector allows choosing a specific output device via `setSinkId()`
 - **Launch**: `uv run mlx-audiogen-server --weights-dir <path> --open` starts server and opens browser
 
