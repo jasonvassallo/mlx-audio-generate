@@ -3,6 +3,7 @@ import type {
   GenerateResponse,
   JobInfo,
   ModelInfo,
+  PresetInfo,
   PromptAnalysis,
   StemResult,
 } from "../types/api";
@@ -75,4 +76,25 @@ export function separateStems(jobId: string): Promise<StemResult> {
   return request<StemResult>(`/separate/${jobId}`, {
     method: "POST",
   });
+}
+
+/** List all saved presets. */
+export function fetchPresets(): Promise<PresetInfo[]> {
+  return request<PresetInfo[]>("/presets");
+}
+
+/** Save current params as a named preset. */
+export function savePreset(
+  name: string,
+  params: GenerateRequest,
+): Promise<{ saved: string }> {
+  return request<{ saved: string }>(`/presets/${encodeURIComponent(name)}`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+/** Load a preset by name. */
+export function loadPreset(name: string): Promise<GenerateRequest> {
+  return request<GenerateRequest>(`/presets/${encodeURIComponent(name)}`);
 }
