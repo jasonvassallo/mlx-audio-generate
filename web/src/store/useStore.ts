@@ -1,10 +1,15 @@
 import { create } from "zustand";
-import type { GenerateRequest, JobInfo, ModelInfo } from "../types/api";
+import type { GenerateRequest, JobInfo, ModelInfo, PresetInfo, PromptAnalysis } from "../types/api";
 import {
   fetchModels,
   submitGeneration,
   fetchJobStatus,
   getAudioUrl,
+  suggestPrompts,
+  separateStems,
+  fetchPresets as apiFetchPresets,
+  savePreset as apiSavePreset,
+  loadPreset as apiLoadPreset,
 } from "../api/client";
 import {
   saveEntry,
@@ -64,6 +69,29 @@ interface AppState {
   settingsLoaded: boolean;
   loadSettings: () => Promise<void>;
   updateSettings: (settings: Partial<HistorySettings>) => Promise<void>;
+
+  // --- Active Tab ---
+  activeTab: "generate" | "suggest";
+  setActiveTab: (tab: "generate" | "suggest") => void;
+
+  // --- Prompt Suggestions ---
+  suggestions: PromptAnalysis | null;
+  suggestionsLoading: boolean;
+  lastAnalyzedPrompt: string;
+  fetchSuggestions: () => Promise<void>;
+
+  // --- Presets ---
+  presets: PresetInfo[];
+  presetsLoading: boolean;
+  loadPresets: () => Promise<void>;
+  saveCurrentPreset: (name: string) => Promise<void>;
+  applyPreset: (name: string) => Promise<void>;
+
+  // --- Stem Separation ---
+  stemResults: Record<string, Record<string, string>>; // jobId → {stemName → stemJobId}
+  stemsLoading: Record<string, boolean>;
+  stemAudioUrls: Record<string, Record<string, string>>; // jobId → {stemName → blobUrl}
+  requestStemSeparation: (jobId: string) => Promise<void>;
 }
 
 const DEFAULT_PARAMS: GenerateRequest = {
@@ -80,6 +108,7 @@ const DEFAULT_PARAMS: GenerateRequest = {
   melody_path: null,
   style_audio_path: null,
   style_coef: 5.0,
+  output_mode: "audio" as const,
 };
 
 const POLL_INTERVAL = 500;
@@ -285,6 +314,107 @@ export const useStore = create<AppState>((set, get) => ({
       if (deleted > 0) {
         await get().loadHistory();
       }
+    }
+  },
+
+  // --- Active Tab ---
+  activeTab: "generate",
+  setActiveTab: (tab) => set({ activeTab: tab }),
+
+  // --- Prompt Suggestions ---
+  suggestions: null,
+  suggestionsLoading: false,
+  lastAnalyzedPrompt: "",
+  fetchSuggestions: async () => {
+    const { params, lastAnalyzedPrompt, suggestionsLoading } = get();
+    const prompt = params.prompt.trim();
+    if (!prompt || suggestionsLoading) return;
+    if (prompt === lastAnalyzedPrompt) return; // cached
+    set({ suggestionsLoading: true });
+    try {
+      const analysis = await suggestPrompts(prompt);
+      set({ suggestions: analysis, lastAnalyzedPrompt: prompt, suggestionsLoading: false });
+    } catch (e) {
+      console.error("Failed to fetch suggestions:", e);
+      set({ suggestionsLoading: false });
+    }
+  },
+
+  // --- Presets ---
+  presets: [],
+  presetsLoading: false,
+  loadPresets: async () => {
+    set({ presetsLoading: true });
+    try {
+      const presets = await apiFetchPresets();
+      set({ presets, presetsLoading: false });
+    } catch (e) {
+      console.error("Failed to load presets:", e);
+      set({ presetsLoading: false });
+    }
+  },
+
+  saveCurrentPreset: async (name: string) => {
+    const { params } = get();
+    try {
+      await apiSavePreset(name, params);
+      await get().loadPresets(); // refresh list
+    } catch (e) {
+      console.error("Failed to save preset:", e);
+    }
+  },
+
+  applyPreset: async (name: string) => {
+    try {
+      const loaded = await apiLoadPreset(name);
+      // Validate model is available
+      const { models } = get();
+      const validModel = models.some((m) => m.model_type === loaded.model);
+      set((s) => ({
+        params: {
+          ...s.params,
+          ...loaded,
+          model: validModel ? loaded.model : s.params.model,
+        },
+        activeTab: "generate",
+      }));
+    } catch (e) {
+      console.error("Failed to apply preset:", e);
+    }
+  },
+
+  // --- Stem Separation ---
+  stemResults: {},
+  stemsLoading: {},
+  stemAudioUrls: {},
+  requestStemSeparation: async (jobId: string) => {
+    const { stemsLoading } = get();
+    if (stemsLoading[jobId]) return;
+    set((s) => ({ stemsLoading: { ...s.stemsLoading, [jobId]: true } }));
+    try {
+      const result = await separateStems(jobId);
+      set((s) => ({
+        stemResults: { ...s.stemResults, [jobId]: result.stems },
+        stemsLoading: { ...s.stemsLoading, [jobId]: false },
+      }));
+      // Eagerly download stem audio blobs before server cleanup (5 min)
+      const urls: Record<string, string> = {};
+      for (const [stemName, stemId] of Object.entries(result.stems)) {
+        try {
+          const res = await fetch(getAudioUrl(stemId));
+          const blob = await res.blob();
+          urls[stemName] = URL.createObjectURL(blob);
+        } catch {
+          // Fall back to direct server URL
+          urls[stemName] = getAudioUrl(stemId);
+        }
+      }
+      set((s) => ({
+        stemAudioUrls: { ...s.stemAudioUrls, [jobId]: urls },
+      }));
+    } catch (e) {
+      console.error("Failed to separate stems:", e);
+      set((s) => ({ stemsLoading: { ...s.stemsLoading, [jobId]: false } }));
     }
   },
 }));
