@@ -9,6 +9,13 @@ import GenerateButton from "./components/GenerateButton";
 import HistoryPanel from "./components/HistoryPanel";
 import AudioDeviceSelector from "./components/AudioDeviceSelector";
 import SettingsPanel from "./components/SettingsPanel";
+import TabBar from "./components/TabBar";
+import SuggestPanel from "./components/SuggestPanel";
+
+const TABS = [
+  { id: "generate", label: "Generate" },
+  { id: "suggest", label: "Suggest" },
+];
 
 export default function App() {
   const loadModels = useStore((s) => s.loadModels);
@@ -16,6 +23,8 @@ export default function App() {
   const loadSettings = useStore((s) => s.loadSettings);
   const modelsLoading = useStore((s) => s.modelsLoading);
   const modelsError = useStore((s) => s.modelsError);
+  const activeTab = useStore((s) => s.activeTab);
+  const setActiveTab = useStore((s) => s.setActiveTab);
   const connected = useServerHeartbeat();
 
   useEffect(() => {
@@ -33,28 +42,41 @@ export default function App() {
           <code className="bg-surface-0/20 px-1 rounded">mlx-audiogen-app</code>
         </div>
       )}
-
       <Header />
 
       <main className="flex flex-1 overflow-hidden">
         {/* Left panel: Controls */}
-        <div className="flex w-80 shrink-0 flex-col gap-5 overflow-y-auto border-r border-border bg-surface-1 p-5">
-          {modelsLoading && (
-            <div className="text-xs text-text-muted">Loading models...</div>
-          )}
-          {modelsError && (
-            <div className="rounded border border-error/30 bg-error/10 px-3 py-2 text-xs text-error">
-              Failed to connect to server: {modelsError}
-            </div>
-          )}
+        <div className="flex w-80 shrink-0 flex-col border-r border-border bg-surface-1">
+          <TabBar
+            active={activeTab}
+            tabs={TABS}
+            onChange={(id) => setActiveTab(id as "generate" | "suggest")}
+          />
 
-          <ModelSelector />
-          <PromptInput />
-          <ParameterPanel />
-          <GenerateButton />
+          <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
+            {activeTab === "generate" && (
+              <>
+                {modelsLoading && (
+                  <div className="text-xs text-text-muted">Loading models...</div>
+                )}
+                {modelsError && (
+                  <div className="rounded border border-error/30 bg-error/10 px-3 py-2 text-xs text-error">
+                    Failed to connect to server: {modelsError}
+                  </div>
+                )}
 
-          {/* Bottom section: settings + audio output */}
-          <div className="mt-auto space-y-4 pt-4 border-t border-border">
+                <ModelSelector />
+                <PromptInput />
+                <ParameterPanel />
+                <GenerateButton />
+              </>
+            )}
+
+            {activeTab === "suggest" && <SuggestPanel />}
+          </div>
+
+          {/* Bottom section: always visible */}
+          <div className="space-y-4 border-t border-border p-5">
             <SettingsPanel />
             <AudioDeviceSelector />
           </div>
