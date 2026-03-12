@@ -74,3 +74,68 @@ export interface ModelInfo {
   model_type: "musicgen" | "stable_audio";
   is_loaded: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 7b: LLM Enhancement, Memory, Settings
+// ---------------------------------------------------------------------------
+
+/** Analysis tags from prompt analysis. */
+export interface AnalysisTags {
+  genres: string[];
+  moods: string[];
+  instruments: string[];
+  missing: string[];
+}
+
+/** Response from POST /api/enhance. */
+export interface EnhanceResponse {
+  original: string;
+  enhanced: string;
+  analysis_tags: AnalysisTags;
+  used_llm: boolean;
+  warning: string | null;
+}
+
+/** LLM model info from GET /api/llm/models. */
+export interface LLMModelInfo {
+  id: string;
+  name: string;
+  size_gb: number;
+  source: "huggingface" | "lmstudio";
+}
+
+/** Server-side settings from GET /api/settings. */
+export interface ServerSettings {
+  llm_model: string | null;
+  ai_enhance: boolean;
+  history_context_count: number;
+}
+
+/** LLM status from GET /api/llm/status. */
+export interface LLMStatus {
+  model_id: string | null;
+  loaded: boolean;
+  idle_seconds: number;
+  memory_mb: number;
+}
+
+/** Tag database from GET /api/tags. */
+export type TagDatabase = Record<string, string[]>;
+
+/** Prompt memory from GET /api/memory. */
+export interface PromptMemoryData {
+  history: Array<{
+    prompt: string;
+    enhanced_prompt?: string;
+    model: string;
+    params: Record<string, unknown>;
+    timestamp: string;
+  }>;
+  style_profile: {
+    top_genres: string[];
+    top_moods: string[];
+    top_instruments: string[];
+    preferred_duration: number;
+    generation_count: number;
+  };
+}
