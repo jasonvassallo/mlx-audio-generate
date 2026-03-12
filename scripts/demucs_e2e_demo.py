@@ -66,11 +66,12 @@ def main() -> None:
     print(f"\n  Separated in {sep_time:.1f}s")
 
     # --- Step 3: Save stems ---
-    print("\n=== Step 3: Saving stems ===")
+    # Stems are returned at original sample rate (32 kHz for MusicGen)
+    stem_sr = 32000
+    print(f"\n=== Step 3: Saving stems (stereo, {stem_sr} Hz) ===")
     for name, stem in stems.items():
-        # Demucs outputs stereo (2, T) at 44.1 kHz
         stem_path = OUTPUT_DIR / f"stem_{name}.wav"
-        sf.write(str(stem_path), stem.T, 44100)
+        sf.write(str(stem_path), stem.T, stem_sr)
         rms = np.sqrt(np.mean(stem**2))
         print(f"  {name:>8s}: RMS={rms:.4f}  → {stem_path}")
 

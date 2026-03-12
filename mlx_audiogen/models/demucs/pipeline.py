@@ -111,7 +111,8 @@ class DemucsPipeline:
         if audio.shape[0] == 1:
             audio = np.concatenate([audio, audio], axis=0)
 
-        # Resample to 44.1 kHz if needed
+        # Resample to 44.1 kHz if needed (Demucs operates at 44.1 kHz)
+        orig_rate = sample_rate
         if sample_rate != self.config.samplerate:
             audio = self._resample(audio, sample_rate, self.config.samplerate)
 
@@ -138,6 +139,9 @@ class DemucsPipeline:
         stems: dict[str, np.ndarray] = {}
         for i, name in enumerate(self.config.sources):
             stem = result_np[0, i]  # (2, T)
+            # Resample back to original sample rate if needed
+            if orig_rate != self.config.samplerate:
+                stem = self._resample(stem, self.config.samplerate, orig_rate)
             stems[name] = stem.astype(np.float32)
 
         return stems

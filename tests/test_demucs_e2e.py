@@ -121,26 +121,23 @@ class TestMusicGenToDemucs:
     def test_stems_sum_approximates_mix(self, generated_audio, separated_stems):
         """Separated stems should approximately sum to the original mix.
 
-        Demucs resamples 32 kHz → 44.1 kHz internally, so we compare in
-        44.1 kHz space by resampling the original as well.
+        Stems are returned at the original sample rate (32 kHz), so we
+        compare directly against the original audio (duplicated to stereo).
         """
-        from mlx_audiogen.models.demucs.pipeline import DemucsPipeline
-
-        # Resample original mono to 44.1 kHz stereo (matching Demucs output)
+        # Original mono → stereo for comparison with stereo stems
         mono = generated_audio if generated_audio.ndim == 1 else generated_audio[0]
         stereo = np.stack([mono, mono], axis=0)
-        resampled = DemucsPipeline._resample(stereo, 32000, 44100)
 
         # Sum all stems
         stem_sum = sum(separated_stems.values())
 
-        # Trim to same length (resampling can differ by a few samples)
-        min_len = min(resampled.shape[-1], stem_sum.shape[-1])
-        resampled = resampled[:, :min_len]
+        # Trim to same length (resampling round-trip can differ by a few samples)
+        min_len = min(stereo.shape[-1], stem_sum.shape[-1])
+        stereo = stereo[:, :min_len]
         stem_sum = stem_sum[:, :min_len]
 
         # Normalise both for comparison
-        orig_rms = np.sqrt(np.mean(resampled**2)) + 1e-8
+        orig_rms = np.sqrt(np.mean(stereo**2)) + 1e-8
         sum_rms = np.sqrt(np.mean(stem_sum**2)) + 1e-8
 
         # RMS ratio should be in a reasonable range

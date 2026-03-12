@@ -241,11 +241,11 @@ class HTDemucs(nn.Module):
         mix_np = np.array(mix)
         z_np = self._spec(mix_np)  # complex spectrogram
 
-        # Complex-as-channels: split real/imag into channel dim
+        # Complex-as-channels: interleave real/imag per audio channel
+        # Reference layout: [real_ch0, imag_ch0, real_ch1, imag_ch1]
         B, C_audio, Fr, T = z_np.shape
-        z_real = z_np.real  # (B, C, Fr, T)
-        z_imag = z_np.imag
-        mag_np = np.concatenate([z_real, z_imag], axis=1).reshape(B, C_audio * 2, Fr, T)
+        z_ri = np.stack([z_np.real, z_np.imag], axis=2)  # (B, C, 2, Fr, T)
+        mag_np = z_ri.reshape(B, C_audio * 2, Fr, T)
 
         x = mx.array(mag_np.astype(np.float32))
         Fq = Fr
@@ -331,12 +331,10 @@ class HTDemucs(nn.Module):
         x = x * std[:, None] + mean[:, None]
 
         # Convert CaC back to complex spectrogram (numpy)
+        # Interleaved layout: [real_ch0, imag_ch0, real_ch1, imag_ch1]
         x_np = np.array(x)
-        # x_np: (B, S, C*2, Fq, T) → split into real/imag
-        half_c = x_np.shape[2] // 2
-        out_real = x_np[:, :, :half_c]
-        out_imag = x_np[:, :, half_c:]
-        zout = out_real + 1j * out_imag  # (B, S, C, Fq, T)
+        x_ri = x_np.reshape(B, S, C_audio, 2, Fq, T_spec)
+        zout = x_ri[:, :, :, 0] + 1j * x_ri[:, :, :, 1]  # (B, S, C, Fq, T)
 
         # iSTFT per source
         spec_out = np.zeros((B, S, C_audio, work_length), dtype=np.float32)
