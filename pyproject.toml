@@ -76,6 +76,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: heavyweight tests requiring real model weights and GPU (deselect with '-m not integration')",
+]
 
 [dependency-groups]
 dev = [

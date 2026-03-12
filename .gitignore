@@ -46,3 +46,9 @@ plugin/JUCE/
 
 # Worktrees
 .worktrees/
+
+# Demo/script output
+output/
+
+# Superpowers
+.superpowers/

@@ -30,8 +30,13 @@ uv run mlx-audiogen-convert --model stabilityai/stable-audio-open-small --output
 uv run mlx-audiogen-convert --model htdemucs --output ./converted/demucs-htdemucs
 
 # Run tests
-uv run pytest
-uv run pytest tests/test_specific.py::test_name  # single test
+uv run pytest                                     # unit tests only (125 tests, ~1s)
+uv run pytest tests/test_specific.py::test_name   # single test
+uv run pytest -m integration -v                   # integration tests (real weights + GPU, ~30s)
+uv run pytest -m "not integration"                # explicit: unit tests only
+
+# Run end-to-end demo (generates audio + separates stems → output/demucs_e2e_demo/)
+uv run python scripts/demucs_e2e_demo.py
 
 # Lint
 uv run ruff check .
