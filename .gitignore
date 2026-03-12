@@ -43,3 +43,6 @@ web/*.tsbuildinfo
 # JUCE plugin build
 plugin/build/
 plugin/JUCE/
+
+# Worktrees
+.worktrees/
