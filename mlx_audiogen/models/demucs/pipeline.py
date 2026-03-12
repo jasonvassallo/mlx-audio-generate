@@ -205,14 +205,37 @@ class DemucsPipeline:
 
     @staticmethod
     def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
-        """Simple linear interpolation resampling."""
+        """FFT-based sinc resampling (alias-free).
+
+        Uses the Fourier method: FFT → zero-pad or truncate in frequency
+        domain → IFFT.  Equivalent to ideal sinc interpolation.
+        """
         if src_rate == dst_rate:
             return audio
-        ratio = dst_rate / src_rate
+        from math import gcd
+
+        g = gcd(src_rate, dst_rate)
+        up = dst_rate // g
+        down = src_rate // g
+
         old_len = audio.shape[-1]
-        new_len = int(old_len * ratio)
-        old_idx = np.linspace(0, old_len - 1, new_len)
+        new_len = int(old_len * up / down)
+
         result = np.zeros((audio.shape[0], new_len), dtype=np.float32)
         for ch in range(audio.shape[0]):
-            result[ch] = np.interp(old_idx, np.arange(old_len), audio[ch])
+            x = audio[ch]
+            n = len(x)
+            spectrum = np.fft.rfft(x)
+            n_out = new_len
+            n_freq_out = n_out // 2 + 1
+            n_freq_in = len(spectrum)
+
+            new_spectrum = np.zeros(n_freq_out, dtype=np.complex64)
+            copy_bins = min(n_freq_in, n_freq_out)
+            new_spectrum[:copy_bins] = spectrum[:copy_bins]
+
+            # Scale to preserve amplitude
+            result[ch] = np.fft.irfft(new_spectrum, n=n_out).astype(np.float32)
+            result[ch] *= n_out / n
+
         return result
