@@ -6,21 +6,25 @@ import ModelSelector from "./components/ModelSelector";
 import PromptInput from "./components/PromptInput";
 import ParameterPanel from "./components/ParameterPanel";
 import GenerateButton from "./components/GenerateButton";
+import EnhancePreview from "./components/EnhancePreview";
 import HistoryPanel from "./components/HistoryPanel";
 import AudioDeviceSelector from "./components/AudioDeviceSelector";
 import SettingsPanel from "./components/SettingsPanel";
+import LLMSettingsPanel from "./components/LLMSettingsPanel";
 import TabBar from "./components/TabBar";
 import SuggestPanel from "./components/SuggestPanel";
 
 const TABS = [
   { id: "generate", label: "Generate" },
   { id: "suggest", label: "Suggest" },
+  { id: "settings", label: "Settings" },
 ];
 
 export default function App() {
   const loadModels = useStore((s) => s.loadModels);
   const loadHistory = useStore((s) => s.loadHistory);
   const loadSettings = useStore((s) => s.loadSettings);
+  const loadTags = useStore((s) => s.loadTags);
   const modelsLoading = useStore((s) => s.modelsLoading);
   const modelsError = useStore((s) => s.modelsError);
   const activeTab = useStore((s) => s.activeTab);
@@ -31,7 +35,8 @@ export default function App() {
     loadModels();
     loadHistory();
     loadSettings();
-  }, [loadModels, loadHistory, loadSettings]);
+    loadTags();
+  }, [loadModels, loadHistory, loadSettings, loadTags]);
 
   return (
     <div className="flex h-screen flex-col bg-surface-0">
@@ -50,7 +55,9 @@ export default function App() {
           <TabBar
             active={activeTab}
             tabs={TABS}
-            onChange={(id) => setActiveTab(id as "generate" | "suggest")}
+            onChange={(id) =>
+              setActiveTab(id as "generate" | "suggest" | "settings")
+            }
           />
 
           <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
@@ -67,12 +74,15 @@ export default function App() {
 
                 <ModelSelector />
                 <PromptInput />
+                <EnhancePreview />
                 <ParameterPanel />
                 <GenerateButton />
               </>
             )}
 
             {activeTab === "suggest" && <SuggestPanel />}
+
+            {activeTab === "settings" && <LLMSettingsPanel />}
           </div>
 
           {/* Bottom section: always visible */}
