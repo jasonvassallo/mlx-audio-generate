@@ -38,6 +38,9 @@ uv run pytest -m "not integration"                # explicit: unit tests only
 # Run end-to-end demo (generates audio + separates stems → output/demucs_e2e_demo/)
 uv run python scripts/demucs_e2e_demo.py
 
+# Test Demucs with native 44.1kHz (no resampling, isolates model quality)
+uv run python scripts/demucs_native_44k_test.py
+
 # Lint
 uv run ruff check .
 uv run ruff format .
@@ -147,7 +150,7 @@ m4l/
 
 **Stable Audio 1.0 variant:** adds a `seconds_start` NumberEmbedder alongside `seconds_total`, auto-detected from conditioner weights at load time
 
-**HTDemucs (Demucs v4) pipeline flow:** stereo 44.1kHz audio -> STFT (numpy, n_fft=4096) -> complex-as-channels -> instance normalize -> parallel spectral U-Net (Conv2d, stride along frequency) + temporal U-Net (Conv1d, stride along time) with DConv residual branches -> CrossTransformerEncoder (5 layers, alternating self-attn and cross-attn between branches) -> parallel decoder U-Nets with skip connections -> spectral branch: CaC mask -> iSTFT; temporal branch: denormalize -> output = spectral + temporal -> 4 sources (drums, bass, other, vocals). For long audio, uses overlap-add with triangle window (25% overlap).
+**HTDemucs (Demucs v4) pipeline flow:** stereo 44.1kHz audio -> STFT (numpy, n_fft=4096) -> complex-as-channels (interleaved: [R0, I0, R1, I1]) -> instance normalize -> parallel spectral U-Net (Conv2d, stride along frequency) + temporal U-Net (Conv1d, stride along time) with DConv residual branches -> CrossTransformerEncoder (5 layers, alternating self-attn and cross-attn between branches) -> parallel decoder U-Nets with skip connections -> spectral branch: CaC mask -> iSTFT; temporal branch: denormalize -> output = spectral + temporal -> 4 sources (drums, bass, other, vocals). For long audio, uses overlap-add with triangle window (25% overlap). Non-44.1kHz input is resampled via reflect-padded FFT sinc method (alias-free, no boundary artifacts); stems are resampled back to the original sample rate on output.
 
 ## HTTP Server Architecture
 

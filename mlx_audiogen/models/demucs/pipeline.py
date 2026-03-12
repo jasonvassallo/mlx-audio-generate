@@ -205,10 +205,12 @@ class DemucsPipeline:
 
     @staticmethod
     def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
-        """FFT-based sinc resampling (alias-free).
+        """FFT-based sinc resampling with reflect-padding (alias-free).
 
-        Uses the Fourier method: FFT → zero-pad or truncate in frequency
-        domain → IFFT.  Equivalent to ideal sinc interpolation.
+        Uses the Fourier method: reflect-pad → FFT → zero-pad or truncate
+        in frequency domain → IFFT → trim.  The reflect-padding eliminates
+        boundary discontinuity artifacts that plain FFT resampling causes
+        (the FFT assumes periodicity, so mismatched endpoints create ringing).
         """
         if src_rate == dst_rate:
             return audio
@@ -221,21 +223,33 @@ class DemucsPipeline:
         old_len = audio.shape[-1]
         new_len = int(old_len * up / down)
 
+        # Reflect-pad length: enough to push boundary ringing outside the
+        # real signal.  A few thousand samples is plenty for audio rates.
+        pad_samples = min(old_len, 4096)
+
         result = np.zeros((audio.shape[0], new_len), dtype=np.float32)
         for ch in range(audio.shape[0]):
             x = audio[ch]
-            n = len(x)
-            spectrum = np.fft.rfft(x)
-            n_out = new_len
-            n_freq_out = n_out // 2 + 1
+
+            # Reflect-pad both ends to create smooth boundary for FFT
+            x_padded = np.pad(x, pad_samples, mode="reflect")
+
+            n = len(x_padded)
+            n_out_padded = int(n * up / down)
+            spectrum = np.fft.rfft(x_padded)
+
+            n_freq_out = n_out_padded // 2 + 1
             n_freq_in = len(spectrum)
 
             new_spectrum = np.zeros(n_freq_out, dtype=np.complex64)
             copy_bins = min(n_freq_in, n_freq_out)
             new_spectrum[:copy_bins] = spectrum[:copy_bins]
 
-            # Scale to preserve amplitude
-            result[ch] = np.fft.irfft(new_spectrum, n=n_out).astype(np.float32)
-            result[ch] *= n_out / n
+            resampled = np.fft.irfft(new_spectrum, n=n_out_padded).astype(np.float32)
+            resampled *= n_out_padded / n
+
+            # Trim off the reflect-padded regions (converted to output sample count)
+            trim_start = int(pad_samples * up / down)
+            result[ch] = resampled[trim_start : trim_start + new_len]
 
         return result
