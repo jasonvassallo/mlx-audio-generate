@@ -8,10 +8,10 @@ import ParameterPanel from "./components/ParameterPanel";
 import GenerateButton from "./components/GenerateButton";
 import EnhancePreview from "./components/EnhancePreview";
 import HistoryPanel from "./components/HistoryPanel";
-import AudioDeviceSelector from "./components/AudioDeviceSelector";
 import SettingsPanel from "./components/SettingsPanel";
 import LLMSettingsPanel from "./components/LLMSettingsPanel";
 import ServerPanel from "./components/ServerPanel";
+import TransportBar from "./components/TransportBar";
 import TabBar from "./components/TabBar";
 import SuggestPanel from "./components/SuggestPanel";
 
@@ -104,16 +104,13 @@ export default function App() {
               <>
                 <ServerPanel />
                 <div className="border-t border-border pt-4">
+                  <SettingsPanel />
+                </div>
+                <div className="border-t border-border pt-4">
                   <LLMSettingsPanel />
                 </div>
               </>
             )}
-          </div>
-
-          {/* Bottom section: always visible */}
-          <div className="space-y-4 border-t border-border p-5">
-            <SettingsPanel />
-            <AudioDeviceSelector />
           </div>
         </div>
 
@@ -122,6 +119,9 @@ export default function App() {
           <HistoryPanel />
         </div>
       </main>
+
+      {/* Transport bar: global playback controls */}
+      <TransportBar connected={connected} />
     </div>
   );
 }

@@ -123,8 +123,9 @@ web/                    # React + Vite + TypeScript SPA (dark/pro audio UI)
 │   ├── store/useStore.ts  # Zustand state: models, params, jobs, history, suggestions, presets, stems, serverUrl
 │   ├── hooks/useServerHeartbeat.ts  # Polls /api/health, reconnects on server URL change
 │   ├── components/
-│   │   ├── App.tsx          # Root layout with tabbed left panel (Generate/Suggest/Settings)
+│   │   ├── App.tsx          # Root layout: Header → sidebar + history → TransportBar
 │   │   ├── TabBar.tsx       # Reusable tab header with active/inactive styling
+│   │   ├── TransportBar.tsx # DAW-style bottom bar: Master BPM, pitch mode, audio device, status
 │   │   ├── ServerPanel.tsx  # Remote server URL config + connection test + status indicator
 │   │   ├── SuggestPanel.tsx # Prompt analysis tags + suggestion cards + preset save/load
 │   │   ├── ParameterPanel.tsx  # Model-aware sliders + output_mode dropdown (audio/midi/both)
@@ -208,8 +209,8 @@ Interactive API docs at `http://localhost:8420/docs` when running.
 - **Node management**: Volta pins Node 22 and npm 10 in `web/package.json`
 - **Dev mode**: `npm run dev` starts Vite on :3000, proxies `/api/*` to FastAPI on :8420
 - **Production**: `npm run build` outputs to `web/dist/`, served by FastAPI's static file mount
-- **Layout**: Tabbed left panel (Generate / Suggest / Settings tabs), right panel for history + audio playback
-- **Components**: TabBar (reusable tab header), ServerPanel (remote server URL config + connection test), SuggestPanel (prompt analysis + presets), ParameterPanel (model-aware sliders + output_mode dropdown), GenerateButton (with progress bar), AudioPlayer (Web Audio API waveform + `setSinkId` device selection), HistoryPanel (job history + MIDI download + stem separation), AudioDeviceSelector, Header (with PayPal support link), EnhancePreview (LLM-enhanced prompt with Accept/Edit/Original), TagAutocomplete (color-coded inline tag suggestions), LLMSettingsPanel (LLM model selector + memory management)
+- **Layout**: Three-layer vertical: Header at top, main area (tabbed sidebar w-80 + history panel), TransportBar at bottom. Sidebar tabs: Generate (model + prompt + params + generate button), Suggest (prompt analysis + presets), Settings (server URL + history retention + LLM config). TransportBar is a fixed-height DAW-style transport strip with Master BPM, pitch mode toggle, audio device selector, connection status, and generation progress
+- **Components**: TabBar (reusable tab header), TransportBar (DAW transport bar with global playback controls), ServerPanel (remote server URL config + connection test), SuggestPanel (prompt analysis + presets), ParameterPanel (model-aware sliders + output_mode dropdown), GenerateButton (with progress bar), AudioPlayer (Web Audio API waveform + `setSinkId` device selection), HistoryPanel (job history + MIDI download + stem separation), AudioDeviceSelector (supports compact mode for transport bar), Header (with PayPal support link), EnhancePreview (LLM-enhanced prompt with Accept/Edit/Original), TagAutocomplete (color-coded inline tag suggestions), LLMSettingsPanel (LLM model selector + memory management)
 - **State**: Zustand store manages models, generation parameters, active job polling, history, prompt suggestions (with deduplication cache), presets, stem separation results (with eager blob download), output_mode, active tab, enhance flow, server settings, tag database, prompt memory, LLM models, and server URL
 - **API client**: Typed fetch wrappers in `src/api/client.ts` with dynamic server URL for local or remote servers. Supports generate, suggest, presets, stems, MIDI, model, enhance, tags, LLM, memory, and settings endpoints
 - **Prompt Suggestions**: `POST /api/suggest` returns analysis tags (genres, moods, instruments, missing elements) + refined prompt suggestions. UI shows colored tags + suggestion cards with Use/Copy buttons

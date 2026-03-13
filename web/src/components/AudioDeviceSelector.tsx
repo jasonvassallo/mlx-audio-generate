@@ -35,7 +35,11 @@ interface AudioDevice {
   label: string;
 }
 
-export default function AudioDeviceSelector() {
+interface AudioDeviceSelectorProps {
+  compact?: boolean;
+}
+
+export default function AudioDeviceSelector({ compact = false }: AudioDeviceSelectorProps) {
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +73,46 @@ export default function AudioDeviceSelector() {
   if (devices.length <= 1 && !error) {
     // Only one output device (or none) — no need to show selector
     return null;
+  }
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-1.5">
+        {/* Speaker icon */}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          className="text-text-muted shrink-0"
+        >
+          <path d="M11 5L6 9H2v6h4l5 4V5z" />
+          <path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" />
+        </svg>
+        {error ? (
+          <span className="text-xs text-text-muted">{error}</span>
+        ) : (
+          <select
+            value={selectedId}
+            onChange={(e) => handleChange(e.target.value)}
+            className="
+              max-w-[140px] rounded border border-border bg-surface-2 px-1.5 py-0.5
+              text-xs text-text-secondary
+              focus:border-accent focus:outline-none
+            "
+          >
+            <option value="">Default</option>
+            {devices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    );
   }
 
   return (
