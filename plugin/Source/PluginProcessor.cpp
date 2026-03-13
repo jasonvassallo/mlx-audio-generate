@@ -114,6 +114,16 @@ private:
     int variations;
 };
 
+class ConnectionThread : public juce::Thread
+{
+public:
+    ConnectionThread (MLXAudioGenProcessor& p)
+        : juce::Thread ("MLX Connection"), processor (p) {}
+    void run() override { processor.connectToServer(); }
+private:
+    MLXAudioGenProcessor& processor;
+};
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -129,6 +139,8 @@ MLXAudioGenProcessor::MLXAudioGenProcessor()
 MLXAudioGenProcessor::~MLXAudioGenProcessor()
 {
     stopTimer();
+    if (connectionThread && connectionThread->isThreadRunning())
+        connectionThread->stopThread (5000);
     if (generationThread && generationThread->isThreadRunning())
         generationThread->stopThread (5000);
 }
@@ -163,16 +175,10 @@ void MLXAudioGenProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     sidechainBuffer.setSize (2, (int) (sampleRate * 30.0));
     sidechainWritePos = 0;
 
-    if (! serverLauncher.isServerAlive())
-    {
-        auto* launcher = &serverLauncher;
-        auto* self = this;
-        juce::Thread::launch ([launcher, self] {
-            launcher->ensureServerRunning();
-            juce::ScopedLock lock (self->stateLock);
-            self->statusMessage = launcher->getStatus();
-        });
-    }
+    if (connectionThread && connectionThread->isThreadRunning())
+        connectionThread->stopThread (5000);
+    connectionThread = std::make_unique<ConnectionThread> (*this);
+    connectionThread->startThread();
 
     // Start session sync timer
     startTimerHz (1);
@@ -397,6 +403,34 @@ juce::String MLXAudioGenProcessor::buildFullPrompt() const
 }
 
 // ---------------------------------------------------------------------------
+// Server connection management
+// ---------------------------------------------------------------------------
+
+void MLXAudioGenProcessor::connectToServer()
+{
+    serverLauncher.ensureServerRunning();
+    configureHttpClient();
+    juce::ScopedLock lock (stateLock);
+    statusMessage = serverLauncher.getStatus();
+}
+
+void MLXAudioGenProcessor::configureHttpClient()
+{
+    auto mode = serverLauncher.getConnectionMode();
+    if (mode == ServerLauncher::ConnectionMode::Remote)
+    {
+        httpClient.setBaseUrl (serverLauncher.getRemoteUrl());
+        httpClient.setServiceToken (serverLauncher.getCfClientId(),
+                                     serverLauncher.getCfClientSecret());
+    }
+    else
+    {
+        httpClient.setBaseUrl ("http://127.0.0.1:8420");
+        httpClient.setServiceToken ({}, {});
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Generation
 // ---------------------------------------------------------------------------
 
@@ -405,9 +439,6 @@ void MLXAudioGenProcessor::triggerGeneration()
     if (generating.load() || prompt.isEmpty()) {
         if (prompt.isEmpty()) { juce::ScopedLock l (stateLock); lastError = "Prompt required"; }
         return;
-    }
-    if (! serverLauncher.isServerAlive()) {
-        juce::ScopedLock l (stateLock); lastError = "Server not running"; return;
     }
 
     // Write sidechain to file if needed
@@ -445,7 +476,6 @@ void MLXAudioGenProcessor::triggerGeneration()
 void MLXAudioGenProcessor::triggerVariations (int count)
 {
     if (generating.load() || prompt.isEmpty()) return;
-    if (! serverLauncher.isServerAlive()) return;
 
     generating.store (true);
     progress.store (0.0f);
@@ -475,11 +505,19 @@ void MLXAudioGenProcessor::runGeneration()
         if (negativePrompt.isNotEmpty()) obj->setProperty ("negative_prompt", negativePrompt);
     }
 
-    // Sidechain conditioning
-    if (useSidechainAsMelody && sidechainFile.existsAsFile())
-        obj->setProperty ("melody_path", sidechainFile.getFullPathName());
-    if (useSidechainAsStyle && sidechainFile.existsAsFile())
-        obj->setProperty ("style_audio_path", sidechainFile.getFullPathName());
+    // Sidechain conditioning (local only — remote server can't read local files)
+    if (serverLauncher.getConnectionMode() != ServerLauncher::ConnectionMode::Remote)
+    {
+        if (useSidechainAsMelody && sidechainFile.existsAsFile())
+            obj->setProperty ("melody_path", sidechainFile.getFullPathName());
+        if (useSidechainAsStyle && sidechainFile.existsAsFile())
+            obj->setProperty ("style_audio_path", sidechainFile.getFullPathName());
+    }
+    else if (useSidechainAsMelody || useSidechainAsStyle)
+    {
+        juce::ScopedLock l (stateLock);
+        lastError = "Sidechain unavailable on remote server";
+    }
 
     int s = PARAM_INT ("seed");
     if (s >= 0) obj->setProperty ("seed", s);
@@ -488,8 +526,15 @@ void MLXAudioGenProcessor::runGeneration()
     auto jobId = httpClient.submitGeneration (jsonBody);
 
     if (jobId.isEmpty()) {
-        juce::ScopedLock l (stateLock); lastError = "Connection failed"; statusMessage = "Error";
-        generating.store (false); return;
+        // Re-resolve server connection and retry once
+        { juce::ScopedLock l (stateLock); statusMessage = "Reconnecting..."; }
+        serverLauncher.recheckConnection();
+        configureHttpClient();
+        jobId = httpClient.submitGeneration (jsonBody);
+        if (jobId.isEmpty()) {
+            juce::ScopedLock l (stateLock); lastError = "No server available"; statusMessage = "Error";
+            generating.store (false); return;
+        }
     }
 
     { juce::ScopedLock l (stateLock); statusMessage = "Generating..."; }
@@ -542,6 +587,19 @@ void MLXAudioGenProcessor::runGeneration()
 
 void MLXAudioGenProcessor::runVariations (int count)
 {
+    // Ensure server is reachable before submitting jobs
+    if (! httpClient.isServerAlive())
+    {
+        { juce::ScopedLock l (stateLock); statusMessage = "Reconnecting..."; }
+        serverLauncher.recheckConnection();
+        configureHttpClient();
+        if (! httpClient.isServerAlive())
+        {
+            juce::ScopedLock l (stateLock); lastError = "No server available"; statusMessage = "Error";
+            generating.store (false); return;
+        }
+    }
+
     count = juce::jmin (count, MAX_VARIATIONS);
     bool isStable = PARAM_CHOICE ("model") == 1;
     auto fullPrompt = buildFullPrompt();
@@ -817,7 +875,6 @@ void MLXAudioGenProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("negativePrompt", negativePrompt, nullptr);
     state.setProperty ("exportFolder", exportFolder, nullptr);
     state.setProperty ("keySignature", keySignature, nullptr);
-    state.setProperty ("serverUrl", httpClient.getBaseUrl(), nullptr);
     state.setProperty ("useSidechainAsMelody", useSidechainAsMelody, nullptr);
     state.setProperty ("useSidechainAsStyle", useSidechainAsStyle, nullptr);
 
@@ -856,7 +913,4 @@ void MLXAudioGenProcessor::setStateInformation (const void* data, int sizeInByte
     promptTemplates.clear();
     promptTemplates.addTokens (templates, "\n", "");
     promptTemplates.removeEmptyStrings();
-
-    auto url = state.getProperty ("serverUrl", "").toString();
-    if (url.isNotEmpty()) httpClient.setBaseUrl (url);
 }

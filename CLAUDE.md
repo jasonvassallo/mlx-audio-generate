@@ -30,7 +30,7 @@ uv run mlx-audiogen-convert --model stabilityai/stable-audio-open-small --output
 uv run mlx-audiogen-convert --model htdemucs --output ./converted/demucs-htdemucs
 
 # Run tests
-uv run pytest                                     # unit tests only (125 tests, ~1s)
+uv run pytest                                     # unit tests only (137 tests, ~14s)
 uv run pytest tests/test_specific.py::test_name   # single test
 uv run pytest -m integration -v                   # integration tests (real weights + GPU, ~30s)
 uv run pytest -m "not integration"                # explicit: unit tests only
@@ -78,6 +78,9 @@ cd web && npm run build
 cd plugin && git submodule update --init  # first time: clone JUCE
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release
 # Installs to ~/Library/Audio/Plug-Ins/{VST3,Components}/
+
+# Configure plugin for remote server fallback (one-time setup)
+./scripts/setup_plugin_remote.sh <cf_client_id> <cf_client_secret>
 
 # Quick import smoke test (no weights needed)
 uv run python -c "from mlx_audiogen.models.musicgen import MusicGenPipeline; print('OK')"
@@ -135,9 +138,10 @@ plugin/                 # JUCE native VST3/AU plugin
 ├── CMakeLists.txt      # Build config (VST3 + AU + Standalone)
 ├── JUCE/               # JUCE framework (git submodule)
 └── Source/
-    ├── PluginProcessor.h/cpp  # Audio processor + async HTTP generation
-    ├── PluginEditor.h/cpp     # Dark-themed DAW UI
-    └── HttpClient.h/cpp       # HTTP client for server communication
+    ├── PluginProcessor.h/cpp  # Audio processor + async HTTP generation + server fallback
+    ├── PluginEditor.h/cpp     # Dark-themed DAW UI + connection mode indicator
+    ├── HttpClient.h/cpp       # HTTP client with CF Access service token auth
+    └── ServerLauncher.h/cpp   # Auto-launch local server + remote fallback
 m4l/
 └── mlx-audiogen.js   # Node for Max HTTP client for Ableton Live integration
 ```
@@ -288,6 +292,40 @@ launchctl load ~/Library/LaunchAgents/com.jasonvassallo.mlx-audiogen-server.plis
 - **Messages to Max**: `status <text>`, `progress <0-100>`, `audio <filepath>`, `error <text>`, `models <json>`
 - **Defaults**: connects to `127.0.0.1:8420`, saves WAVs to OS temp dir (`mlx-audiogen/`)
 - **Input clamping**: All numeric values use `Math.max`/`Math.min` to prevent out-of-range values
+
+## Plugin Server Fallback (Phase 8b)
+
+The JUCE plugin auto-connects to the best available server:
+
+1. **Local first**: `ServerLauncher` checks `127.0.0.1:8420`, launches via `uv run mlx-audiogen-app` if not running
+2. **Remote fallback**: If local unavailable, checks remote URL from `~/.mlx-audiogen/config.json` with CF Access auth
+3. **Re-resolve on failure**: If a generation request fails, `recheckConnection()` re-evaluates local vs remote before retry
+
+### Connection Modes
+- **Local** (green status): Plugin talks to `127.0.0.1:8420`
+- **Remote** (blue status): Plugin talks to remote URL (e.g., `https://musicgen.djvassallo.com`) with CF Access service token
+- **Disconnected** (gray status): No server available
+
+### Cloudflare Access Authentication
+Remote server is behind CF Access. Plugin uses a **Service Token** (non-interactive auth):
+- Headers: `CF-Access-Client-Id` + `CF-Access-Client-Secret` sent on all requests to non-localhost URLs
+- Credentials stored in `~/.mlx-audiogen/config.json` (`cf_client_id`, `cf_client_secret`)
+- Setup: `./scripts/setup_plugin_remote.sh <client_id> <client_secret>`
+
+### Config Format (`~/.mlx-audiogen/config.json`)
+```json
+{
+  "project_path": "/Users/.../mlx-audiogen",
+  "uv_path": "/opt/homebrew/bin/uv",
+  "remote_url": "https://musicgen.djvassallo.com",
+  "cf_client_id": "xxx.access",
+  "cf_client_secret": "yyy"
+}
+```
+
+### Limitations
+- **Sidechain conditioning** (melody/style) is local-only — remote server can't read local audio files
+- **Service token setup** requires one-time CF dashboard steps (create token + add Service Auth policy)
 
 ## Critical MLX Patterns
 

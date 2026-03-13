@@ -115,6 +115,15 @@ public:
     HttpClient httpClient;
     ServerLauncher serverLauncher;
 
+    /** Configure httpClient URL + auth based on serverLauncher connection mode. */
+    void configureHttpClient();
+
+    /** Connect to server (called on background thread). */
+    void connectToServer();
+
+    /** Current connection mode for UI display. */
+    ServerLauncher::ConnectionMode getConnectionMode() const { return serverLauncher.getConnectionMode(); }
+
 private:
     void timerCallback() override;
     juce::String buildFullPrompt() const;
@@ -142,6 +151,7 @@ private:
     juce::String lastError;
     juce::CriticalSection stateLock;
     std::unique_ptr<juce::Thread> generationThread;
+    std::unique_ptr<juce::Thread> connectionThread;
 
     // DSP
     juce::dsp::DelayLine<float> delayLine { 48000 };

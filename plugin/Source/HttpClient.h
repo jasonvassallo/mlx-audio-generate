@@ -3,10 +3,11 @@
 #include <juce_core/juce_core.h>
 
 /**
- * Lightweight HTTP client for talking to the mlx-audiogen-server.
+ * HTTP client for the mlx-audiogen-server.
  *
  * All methods are synchronous — call them from a background thread.
- * The server runs on localhost:8420 by default.
+ * Supports both local (default localhost:8420) and remote servers
+ * (with Cloudflare Access service token authentication).
  */
 class HttpClient
 {
@@ -40,12 +41,19 @@ public:
      */
     juce::MemoryBlock downloadAudio (const juce::String& jobId);
 
-    /** Get/set the server base URL. */
-    juce::String getBaseUrl() const { return baseUrl; }
-    void setBaseUrl (const juce::String& url) { baseUrl = url; }
+    /** Get/set the server base URL (thread-safe). */
+    juce::String getBaseUrl() const { juce::ScopedLock l (configLock); return baseUrl; }
+    void setBaseUrl (const juce::String& url) { juce::ScopedLock l (configLock); baseUrl = url; }
+
+    /** Set Cloudflare Access service token for remote server auth (thread-safe). */
+    void setServiceToken (const juce::String& clientId, const juce::String& clientSecret);
+    bool hasServiceToken() const { juce::ScopedLock l (configLock); return cfClientId.isNotEmpty() && cfClientSecret.isNotEmpty(); }
 
 private:
+    mutable juce::CriticalSection configLock;
     juce::String baseUrl;
+    juce::String cfClientId;
+    juce::String cfClientSecret;
 
     /** Perform a GET request, return response body. */
     juce::String doGet (const juce::String& path, int timeoutMs = 5000);
@@ -54,4 +62,7 @@ private:
     juce::String doPost (const juce::String& path,
                          const juce::String& jsonBody,
                          int timeoutMs = 5000);
+
+    /** Build Cloudflare Access auth headers (must be called under configLock). */
+    juce::String getAuthHeaders() const;
 };

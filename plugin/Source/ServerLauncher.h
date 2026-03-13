@@ -5,30 +5,42 @@
 /**
  * Automatically launches the mlx-audiogen server if it isn't running.
  *
- * On first use, writes a config file to ~/.mlx-audiogen/config.json
- * with the project path and uv executable location. The plugin reads
- * this config on load and spawns "uv run mlx-audiogen-app" as a
- * detached background process.
+ * Supports both local (via uv) and remote (via Cloudflare Tunnel)
+ * server connections. Local is always preferred; remote is used as
+ * fallback when local launch fails.
  *
- * The server auto-discovers all converted models in ./converted/ and
- * starts on port 8420. No manual terminal commands needed.
+ * Config file: ~/.mlx-audiogen/config.json
  */
 class ServerLauncher
 {
 public:
     ServerLauncher();
 
+    /** Connection mode determined by ensureServerRunning / recheckConnection. */
+    enum class ConnectionMode { Local, Remote, Disconnected };
+
     /**
-     * Ensure the server is running. If not, launch it automatically.
-     * @return true if server is alive (or was just launched), false on failure.
+     * Ensure a server is available. Tries local first, falls back to remote.
+     * @return true if any server (local or remote) is reachable.
      */
     bool ensureServerRunning();
 
     /** Get human-readable status for UI display. */
     juce::String getStatus() const { return status; }
 
-    /** Check if server is currently reachable. */
+    /** Check if local server is currently reachable. */
     bool isServerAlive();
+
+    /** Current connection mode. */
+    ConnectionMode getConnectionMode() const { return connectionMode; }
+
+    /** Re-check server availability and update connection mode. */
+    ConnectionMode recheckConnection();
+
+    /** Remote server config from ~/.mlx-audiogen/config.json. */
+    juce::String getRemoteUrl() const { return remoteUrl; }
+    juce::String getCfClientId() const { return cfClientId; }
+    juce::String getCfClientSecret() const { return cfClientSecret; }
 
 private:
     /** Find the config file (~/.mlx-audiogen/config.json). */
@@ -44,6 +56,18 @@ private:
     bool launchServer (const juce::String& uvPath,
                        const juce::String& projectPath);
 
+    /** Load remote_url, cf_client_id, cf_client_secret from config.json. */
+    void loadRemoteConfig();
+
+    /** Check if the remote server is reachable (with auth headers). */
+    bool isRemoteServerAlive();
+
     juce::String status;
     bool serverLaunched { false };
+    ConnectionMode connectionMode { ConnectionMode::Disconnected };
+
+    // Remote server config
+    juce::String remoteUrl;
+    juce::String cfClientId;
+    juce::String cfClientSecret;
 };

@@ -725,6 +725,16 @@ void MLXAudioGenEditor::timerCallback()
     }
 
     statusLabel.setText (proc.getStatusMessage(), juce::dontSendNotification);
+
+    // Color-code status by connection mode
+    auto connMode = proc.getConnectionMode();
+    if (connMode == ServerLauncher::ConnectionMode::Local)
+        statusLabel.setColour (juce::Label::textColourId, juce::Colour (successColour));
+    else if (connMode == ServerLauncher::ConnectionMode::Remote)
+        statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xFF60A5FA));
+    else
+        statusLabel.setColour (juce::Label::textColourId, juce::Colour (dimTextColour));
+
     bpmDisplay.setText (juce::String ((int) proc.getEffectiveBpm()) + " BPM", juce::dontSendNotification);
 
     if (audio) {

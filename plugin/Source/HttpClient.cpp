@@ -5,6 +5,22 @@ HttpClient::HttpClient (const juce::String& url)
 {
 }
 
+void HttpClient::setServiceToken (const juce::String& clientId, const juce::String& clientSecret)
+{
+    juce::ScopedLock l (configLock);
+    cfClientId = clientId;
+    cfClientSecret = clientSecret;
+}
+
+juce::String HttpClient::getAuthHeaders() const
+{
+    // Caller must hold configLock.
+    if (cfClientId.isNotEmpty() && cfClientSecret.isNotEmpty())
+        return "CF-Access-Client-Id: " + cfClientId
+             + "\r\nCF-Access-Client-Secret: " + cfClientSecret;
+    return {};
+}
+
 bool HttpClient::isServerAlive()
 {
     auto response = doGet ("/api/health");
@@ -37,10 +53,18 @@ juce::String HttpClient::fetchStatus (const juce::String& jobId)
 
 juce::MemoryBlock HttpClient::downloadAudio (const juce::String& jobId)
 {
-    juce::URL url (baseUrl + "/api/audio/" + jobId);
+    juce::String currentBase, authHeaders;
+    {
+        juce::ScopedLock l (configLock);
+        currentBase = baseUrl;
+        authHeaders = getAuthHeaders();
+    }
+
+    juce::URL url (currentBase + "/api/audio/" + jobId);
 
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
-                       .withConnectionTimeoutMs (5000)
+                       .withConnectionTimeoutMs (10000)
+                       .withExtraHeaders (authHeaders)
                        .withResponseHeaders (nullptr)
                        .withStatusCode (nullptr)
                        .withNumRedirectsToFollow (0);
@@ -61,10 +85,18 @@ juce::MemoryBlock HttpClient::downloadAudio (const juce::String& jobId)
 
 juce::String HttpClient::doGet (const juce::String& path, int timeoutMs)
 {
-    juce::URL url (baseUrl + path);
+    juce::String currentBase, authHeaders;
+    {
+        juce::ScopedLock l (configLock);
+        currentBase = baseUrl;
+        authHeaders = getAuthHeaders();
+    }
+
+    juce::URL url (currentBase + path);
 
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                        .withConnectionTimeoutMs (timeoutMs)
+                       .withExtraHeaders (authHeaders)
                        .withResponseHeaders (nullptr)
                        .withStatusCode (nullptr)
                        .withNumRedirectsToFollow (0);
@@ -81,14 +113,25 @@ juce::String HttpClient::doPost (const juce::String& path,
                                   const juce::String& jsonBody,
                                   int timeoutMs)
 {
-    juce::URL url (baseUrl + path);
+    juce::String currentBase, cfHeaders;
+    {
+        juce::ScopedLock l (configLock);
+        currentBase = baseUrl;
+        cfHeaders = getAuthHeaders();
+    }
+
+    juce::URL url (currentBase + path);
 
     // POST with JSON body
     url = url.withPOSTData (jsonBody);
 
+    juce::String extraHeaders = "Content-Type: application/json";
+    if (cfHeaders.isNotEmpty())
+        extraHeaders += "\r\n" + cfHeaders;
+
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                        .withConnectionTimeoutMs (timeoutMs)
-                       .withExtraHeaders ("Content-Type: application/json")
+                       .withExtraHeaders (extraHeaders)
                        .withResponseHeaders (nullptr)
                        .withStatusCode (nullptr)
                        .withNumRedirectsToFollow (0);

@@ -1,69 +1,154 @@
 #include "ServerLauncher.h"
+#include <sys/stat.h>
 
 ServerLauncher::ServerLauncher()
 {
+    loadRemoteConfig();
 }
+
+// ---------------------------------------------------------------------------
+// Remote config
+// ---------------------------------------------------------------------------
+
+void ServerLauncher::loadRemoteConfig()
+{
+    auto configFile = getConfigFile();
+    if (! configFile.existsAsFile())
+        return;
+
+    auto text = configFile.loadFileAsString();
+    auto parsed = juce::JSON::parse (text);
+
+    if (auto* obj = parsed.getDynamicObject())
+    {
+        remoteUrl = obj->getProperty ("remote_url").toString();
+        cfClientId = obj->getProperty ("cf_client_id").toString();
+        cfClientSecret = obj->getProperty ("cf_client_secret").toString();
+    }
+}
+
+bool ServerLauncher::isRemoteServerAlive()
+{
+    if (remoteUrl.isEmpty())
+        return false;
+
+    juce::URL url (remoteUrl + "/api/health");
+
+    juce::String extraHeaders;
+    if (cfClientId.isNotEmpty() && cfClientSecret.isNotEmpty())
+        extraHeaders = "CF-Access-Client-Id: " + cfClientId
+                     + "\r\nCF-Access-Client-Secret: " + cfClientSecret;
+
+    auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                       .withConnectionTimeoutMs (5000)
+                       .withExtraHeaders (extraHeaders)
+                       .withResponseHeaders (nullptr)
+                       .withStatusCode (nullptr)
+                       .withNumRedirectsToFollow (0);
+
+    auto stream = url.createInputStream (options);
+    if (stream == nullptr)
+        return false;
+
+    auto response = stream->readEntireStreamAsString();
+    return response.contains ("ok");
+}
+
+ServerLauncher::ConnectionMode ServerLauncher::recheckConnection()
+{
+    if (isServerAlive())
+    {
+        connectionMode = ConnectionMode::Local;
+        status = "Server connected (local)";
+    }
+    else if (isRemoteServerAlive())
+    {
+        connectionMode = ConnectionMode::Remote;
+        status = "Server connected (remote)";
+    }
+    else
+    {
+        connectionMode = ConnectionMode::Disconnected;
+        status = "Disconnected";
+    }
+    return connectionMode;
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
 
 bool ServerLauncher::ensureServerRunning()
 {
-    // Already running?
+    // Already running locally?
     if (isServerAlive())
     {
-        status = "Server connected";
+        connectionMode = ConnectionMode::Local;
+        status = "Server connected (local)";
         return true;
     }
 
-    // Already tried to launch this session
-    if (serverLaunched)
+    // Try to launch local server (if not already attempted)
+    if (! serverLaunched)
     {
-        status = "Waiting for server...";
-        return isServerAlive();
+        status = "Starting server...";
+
+        auto uvPath = findUvExecutable();
+        if (uvPath.isNotEmpty())
+        {
+            auto projectPath = loadProjectPath();
+            if (projectPath.isNotEmpty())
+            {
+                if (launchServer (uvPath, projectPath))
+                {
+                    serverLaunched = true;
+                    status = "Server starting...";
+
+                    // Wait up to 60 seconds for server to become alive
+                    // (first load can take 30+ seconds for large models)
+                    for (int i = 0; i < 120; ++i)
+                    {
+                        juce::Thread::sleep (500);
+
+                        if (isServerAlive())
+                        {
+                            connectionMode = ConnectionMode::Local;
+                            status = "Server connected (local)";
+                            return true;
+                        }
+
+                        status = juce::String ("Starting server... (")
+                               + juce::String (i / 2) + "s)";
+                    }
+                }
+            }
+        }
     }
-
-    status = "Starting server...";
-
-    // Find uv executable
-    auto uvPath = findUvExecutable();
-    if (uvPath.isEmpty())
+    else
     {
-        status = "Error: uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh";
-        return false;
-    }
-
-    // Find project directory
-    auto projectPath = loadProjectPath();
-    if (projectPath.isEmpty())
-    {
-        status = "Error: Project not configured. See ~/.mlx-audiogen/config.json";
-        return false;
-    }
-
-    // Launch server
-    if (! launchServer (uvPath, projectPath))
-    {
-        status = "Error: Failed to start server";
-        return false;
-    }
-
-    serverLaunched = true;
-    status = "Server starting...";
-
-    // Wait up to 60 seconds for server to become alive
-    // (first load can take 30+ seconds for large models)
-    for (int i = 0; i < 120; ++i)
-    {
-        juce::Thread::sleep (500);
-
+        // Already tried launching — check if it came up
         if (isServerAlive())
         {
-            status = "Server connected";
+            connectionMode = ConnectionMode::Local;
+            status = "Server connected (local)";
             return true;
         }
-
-        status = juce::String ("Starting server... (") + juce::String (i / 2) + "s)";
     }
 
-    status = "Error: Server failed to start within 60 seconds";
+    // Local failed — try remote server as fallback
+    if (isRemoteServerAlive())
+    {
+        connectionMode = ConnectionMode::Remote;
+        status = "Server connected (remote)";
+        return true;
+    }
+
+    connectionMode = ConnectionMode::Disconnected;
+    if (! serverLaunched)
+        status = "No server available";
+    else
+        status = "Local server failed, remote unavailable";
+
     return false;
 }
 
@@ -133,13 +218,21 @@ juce::String ServerLauncher::loadProjectPath()
         // Verify it's the right project by checking for pyproject.toml
         if (dir.isDirectory() && dir.getChildFile ("pyproject.toml").existsAsFile())
         {
-            // Save config for future loads
+            // Save config for future loads (preserve remote fields)
             auto* obj = new juce::DynamicObject();
             obj->setProperty ("project_path", path);
             obj->setProperty ("uv_path", findUvExecutable());
 
+            if (remoteUrl.isNotEmpty())
+                obj->setProperty ("remote_url", remoteUrl);
+            if (cfClientId.isNotEmpty())
+                obj->setProperty ("cf_client_id", cfClientId);
+            if (cfClientSecret.isNotEmpty())
+                obj->setProperty ("cf_client_secret", cfClientSecret);
+
             juce::var json (obj);
             configFile.replaceWithText (juce::JSON::toString (json));
+            ::chmod (configFile.getFullPathName().toRawUTF8(), 0600);
 
             return path;
         }
@@ -151,9 +244,13 @@ juce::String ServerLauncher::loadProjectPath()
         auto* obj = new juce::DynamicObject();
         obj->setProperty ("project_path", "/path/to/mlx-audiogen");
         obj->setProperty ("uv_path", "uv");
+        obj->setProperty ("remote_url", "");
+        obj->setProperty ("cf_client_id", "");
+        obj->setProperty ("cf_client_secret", "");
 
         juce::var json (obj);
         configFile.replaceWithText (juce::JSON::toString (json));
+        ::chmod (configFile.getFullPathName().toRawUTF8(), 0600);
     }
 
     return {};
@@ -204,7 +301,6 @@ bool ServerLauncher::launchServer (const juce::String& uvPath,
 {
     // Launch: uv run mlx-audiogen-app
     // Detached so it survives the plugin being unloaded
-    auto projectDir = juce::File (projectPath);
 
     // Create a launcher script that sets up the environment properly
     auto launchScript = getConfigFile().getSiblingFile ("launch-server.sh");
