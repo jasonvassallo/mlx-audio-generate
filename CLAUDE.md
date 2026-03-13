@@ -220,6 +220,65 @@ Interactive API docs at `http://localhost:8420/docs` when running.
 - **Server Settings**: LLM model selection, AI enhance toggle, history context slider (0-200). Persisted at `~/.mlx-audiogen/settings.json`. Separate from client-side IndexedDB settings (retention/BPM/pitch)
 - **Remote Server**: ServerPanel in Settings tab allows pointing the UI at a remote mlx-audiogen server (e.g., `http://192.168.1.100:8420`). URL persisted in localStorage (`mlx_audiogen_server_url`). Connection tested via `/api/health` before applying. Heartbeat hook auto-reconnects when URL changes. Disconnect banner shows remote URL + link to Settings. Server must run with `--host 0.0.0.0` for remote access. CORS is already enabled for all origins
 
+## Cloud Deployment (Mac Mini)
+
+The production deployment runs on a Mac Mini (Apple Silicon) behind a Cloudflare Tunnel, serving both the web UI and API at `https://musicgen.djvassallo.com`.
+
+### Architecture
+```
+Browser → Cloudflare Edge → cloudflared tunnel (Mac Mini)
+                              ↓
+                         localhost:8420 → FastAPI (web UI + API)
+```
+
+### LaunchAgent Services (Mac Mini)
+Two LaunchAgents auto-start on login and restart on failure (`KeepAlive`):
+
+1. **Cloudflare Tunnel** (`com.jasonvassallo.cloudflared-tunnel`)
+   - Config: `~/.cloudflared/config.yml` (email-triage tunnel, multiple ingress rules)
+   - Serves: `musicgen.djvassallo.com`, `www.djvassallo.com`, `ssh.djvassallo.com`, etc.
+   - Logs: `/opt/homebrew/var/log/cloudflared.log`
+
+2. **mlx-audiogen Server** (`com.jasonvassallo.mlx-audiogen-server`)
+   - Wrapper: `~/bin/mlx-audiogen-server.sh` (uses external venv to avoid TCC restrictions)
+   - Venv: `~/mlx-audiogen-venv/` (non-editable install, outside `~/Documents` for TCC)
+   - Weights: `~/mlx-audiogen-data/converted/` (symlinked from project's `converted/`)
+   - Web dist: `~/mlx-audiogen-data/web-dist/` (copied from `web/dist/` after build)
+   - Logs: `~/Library/Logs/mlx-audiogen-server.log`
+
+### macOS TCC Restriction
+LaunchAgents cannot read files in `~/Documents/` (TCC — Transparency, Consent, and Control). The workaround:
+- **Venv**: Created at `~/mlx-audiogen-venv/` with non-editable install (`uv pip install ".[server]"`)
+- **Weights**: Moved to `~/mlx-audiogen-data/converted/`, symlinked back to project
+- **Web dist**: Copied to `~/mlx-audiogen-data/web-dist/`, symlinked into venv's site-packages
+
+### Updating the Deployment
+After code changes, the Mac Mini deployment needs manual update:
+```bash
+# SSH to Mac Mini
+ssh macmini
+
+# Pull latest code
+cd ~/Documents/Code/mlx-audiogen && git pull
+
+# Reinstall package into external venv
+~/.local/bin/uv pip install ".[server]" --python ~/mlx-audiogen-venv/bin/python
+
+# Rebuild and copy web dist
+cd web && npm run build && cp -r dist/* ~/mlx-audiogen-data/web-dist/
+
+# Restart server
+launchctl unload ~/Library/LaunchAgents/com.jasonvassallo.mlx-audiogen-server.plist
+launchctl load ~/Library/LaunchAgents/com.jasonvassallo.mlx-audiogen-server.plist
+```
+
+### Mac Mini Model Inventory
+- **Audio gen**: `musicgen-small` (in `~/mlx-audiogen-data/converted/`)
+- **Demucs**: `demucs-htdemucs` (in `~/mlx-audiogen-data/converted/`)
+- **LLM**: `mlx-community/Qwen3.5-9B-6bit` (default for all tasks except vision)
+- **Vision**: `mlx-community/Qwen3.5-35B-A3B-4bit` (vision/complex tasks only)
+- All 12 converted MLX audio models published to `jasonvassallo/*` on HuggingFace
+
 ## Max for Live Integration
 
 `m4l/mlx-audiogen.js` is a Node for Max script that connects Ableton Live to the HTTP server:
