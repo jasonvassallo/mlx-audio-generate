@@ -116,11 +116,13 @@ mlx_audiogen/
 │   └── convert.py    # Unified conversion: auto-detects model type from repo ID
 web/                    # React + Vite + TypeScript SPA (dark/pro audio UI)
 ├── src/
-│   ├── api/client.ts   # Typed fetch wrappers for all API endpoints (generate, suggest, presets, stems)
-│   ├── store/useStore.ts  # Zustand state: models, params, jobs, history, suggestions, presets, stems
+│   ├── api/client.ts   # Typed fetch wrappers + dynamic server URL (local or remote)
+│   ├── store/useStore.ts  # Zustand state: models, params, jobs, history, suggestions, presets, stems, serverUrl
+│   ├── hooks/useServerHeartbeat.ts  # Polls /api/health, reconnects on server URL change
 │   ├── components/
-│   │   ├── App.tsx          # Root layout with tabbed left panel (Generate/Suggest)
+│   │   ├── App.tsx          # Root layout with tabbed left panel (Generate/Suggest/Settings)
 │   │   ├── TabBar.tsx       # Reusable tab header with active/inactive styling
+│   │   ├── ServerPanel.tsx  # Remote server URL config + connection test + status indicator
 │   │   ├── SuggestPanel.tsx # Prompt analysis tags + suggestion cards + preset save/load
 │   │   ├── ParameterPanel.tsx  # Model-aware sliders + output_mode dropdown (audio/midi/both)
 │   │   ├── HistoryPanel.tsx    # Job history + MIDI download + stem separation with color-coded players
@@ -203,9 +205,9 @@ Interactive API docs at `http://localhost:8420/docs` when running.
 - **Dev mode**: `npm run dev` starts Vite on :3000, proxies `/api/*` to FastAPI on :8420
 - **Production**: `npm run build` outputs to `web/dist/`, served by FastAPI's static file mount
 - **Layout**: Tabbed left panel (Generate / Suggest / Settings tabs), right panel for history + audio playback
-- **Components**: TabBar (reusable tab header), SuggestPanel (prompt analysis + presets), ParameterPanel (model-aware sliders + output_mode dropdown), GenerateButton (with progress bar), AudioPlayer (Web Audio API waveform + `setSinkId` device selection), HistoryPanel (job history + MIDI download + stem separation), AudioDeviceSelector, Header (with PayPal support link), EnhancePreview (LLM-enhanced prompt with Accept/Edit/Original), TagAutocomplete (color-coded inline tag suggestions), LLMSettingsPanel (LLM model selector + memory management)
-- **State**: Zustand store manages models, generation parameters, active job polling, history, prompt suggestions (with deduplication cache), presets, stem separation results (with eager blob download), output_mode, active tab, enhance flow, server settings, tag database, prompt memory, and LLM models
-- **API client**: Typed fetch wrappers in `src/api/client.ts` for generate, suggest, presets, stems, MIDI, model, enhance, tags, LLM, memory, and settings endpoints
+- **Components**: TabBar (reusable tab header), ServerPanel (remote server URL config + connection test), SuggestPanel (prompt analysis + presets), ParameterPanel (model-aware sliders + output_mode dropdown), GenerateButton (with progress bar), AudioPlayer (Web Audio API waveform + `setSinkId` device selection), HistoryPanel (job history + MIDI download + stem separation), AudioDeviceSelector, Header (with PayPal support link), EnhancePreview (LLM-enhanced prompt with Accept/Edit/Original), TagAutocomplete (color-coded inline tag suggestions), LLMSettingsPanel (LLM model selector + memory management)
+- **State**: Zustand store manages models, generation parameters, active job polling, history, prompt suggestions (with deduplication cache), presets, stem separation results (with eager blob download), output_mode, active tab, enhance flow, server settings, tag database, prompt memory, LLM models, and server URL
+- **API client**: Typed fetch wrappers in `src/api/client.ts` with dynamic server URL for local or remote servers. Supports generate, suggest, presets, stems, MIDI, model, enhance, tags, LLM, memory, and settings endpoints
 - **Prompt Suggestions**: `POST /api/suggest` returns analysis tags (genres, moods, instruments, missing elements) + refined prompt suggestions. UI shows colored tags + suggestion cards with Use/Copy buttons
 - **Presets**: Save/load `.mlxpreset` JSON files from `~/.mlx-audiogen/presets/`. UI validates names with `^[a-zA-Z0-9_-]{1,64}$` regex
 - **Stem Separation**: `POST /api/separate/{id}` splits audio into stems. UI shows color-coded inline `<audio>` players. Blob URLs eagerly downloaded to survive server's 5-minute job cleanup
@@ -216,6 +218,7 @@ Interactive API docs at `http://localhost:8420/docs` when running.
 - **Tag Autocomplete**: TagAutocomplete dropdown appears below prompt textarea, filtered by last typed token (min 2 chars). Tags are color-coded by category: genre (amber), mood (emerald), instrument (sky), era (purple), production (rose)
 - **Prompt Memory**: Persisted at `~/.mlx-audiogen/prompt_memory.json` (max 2000 entries). Style profile auto-derived from history (top genres/moods/instruments, preferred duration). Export/Import/Clear via LLMSettingsPanel
 - **Server Settings**: LLM model selection, AI enhance toggle, history context slider (0-200). Persisted at `~/.mlx-audiogen/settings.json`. Separate from client-side IndexedDB settings (retention/BPM/pitch)
+- **Remote Server**: ServerPanel in Settings tab allows pointing the UI at a remote mlx-audiogen server (e.g., `http://192.168.1.100:8420`). URL persisted in localStorage (`mlx_audiogen_server_url`). Connection tested via `/api/health` before applying. Heartbeat hook auto-reconnects when URL changes. Disconnect banner shows remote URL + link to Settings. Server must run with `--host 0.0.0.0` for remote access. CORS is already enabled for all origins
 
 ## Max for Live Integration
 

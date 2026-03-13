@@ -15,17 +15,51 @@ import type {
 } from "../types/api";
 
 /**
- * API base URL.
- * In dev mode, Vite proxies /api to the FastAPI server (see vite.config.ts).
- * In production, the FastAPI server serves both the SPA and the API.
+ * API base URL management.
+ *
+ * Default: "/api" (works with Vite proxy in dev and FastAPI static serving in prod).
+ * Remote: "http://host:port/api" when the user configures a remote server URL.
+ *
+ * The server URL (without /api suffix) is persisted in localStorage so it
+ * survives page refreshes. The module-level `_base` variable is used for
+ * fast access by all fetch functions.
  */
-const BASE = "/api";
+const SERVER_URL_KEY = "mlx_audiogen_server_url";
+
+function resolveBase(serverUrl: string): string {
+  if (!serverUrl) return "/api";
+  return serverUrl.replace(/\/+$/, "") + "/api";
+}
+
+let _serverUrl = localStorage.getItem(SERVER_URL_KEY) || "";
+let _base = resolveBase(_serverUrl);
+
+/** Set the remote server URL. Pass empty string to revert to local. */
+export function setServerUrl(url: string): void {
+  _serverUrl = url;
+  _base = resolveBase(url);
+  if (url) {
+    localStorage.setItem(SERVER_URL_KEY, url);
+  } else {
+    localStorage.removeItem(SERVER_URL_KEY);
+  }
+}
+
+/** Get the current server URL (without /api suffix). Empty = local. */
+export function getServerUrl(): string {
+  return _serverUrl;
+}
+
+/** Get the resolved API base URL (e.g. "/api" or "http://host:port/api"). */
+export function getApiBase(): string {
+  return _base;
+}
 
 async function request<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${_base}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
@@ -58,12 +92,12 @@ export function fetchJobStatus(jobId: string): Promise<JobInfo> {
 
 /** Get the URL for downloading generated audio. */
 export function getAudioUrl(jobId: string): string {
-  return `${BASE}/audio/${jobId}`;
+  return `${_base}/audio/${jobId}`;
 }
 
 /** Get the URL for downloading generated MIDI. */
 export function getMidiUrl(jobId: string): string {
-  return `${BASE}/midi/${jobId}`;
+  return `${_base}/midi/${jobId}`;
 }
 
 /** Get AI prompt suggestions. */
@@ -157,7 +191,7 @@ export function clearMemory(): Promise<{ status: string }> {
 
 /** Export prompt memory as downloadable JSON. */
 export function getMemoryExportUrl(): string {
-  return `${BASE}/memory/export`;
+  return `${_base}/memory/export`;
 }
 
 /** Import prompt memory from file. */
@@ -166,7 +200,7 @@ export async function importMemory(
 ): Promise<{ status: string }> {
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(`${BASE}/memory/import`, {
+  const res = await fetch(`${_base}/memory/import`, {
     method: "POST",
     body: formData,
   });

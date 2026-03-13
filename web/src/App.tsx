@@ -11,6 +11,7 @@ import HistoryPanel from "./components/HistoryPanel";
 import AudioDeviceSelector from "./components/AudioDeviceSelector";
 import SettingsPanel from "./components/SettingsPanel";
 import LLMSettingsPanel from "./components/LLMSettingsPanel";
+import ServerPanel from "./components/ServerPanel";
 import TabBar from "./components/TabBar";
 import SuggestPanel from "./components/SuggestPanel";
 
@@ -29,6 +30,7 @@ export default function App() {
   const modelsError = useStore((s) => s.modelsError);
   const activeTab = useStore((s) => s.activeTab);
   const setActiveTab = useStore((s) => s.setActiveTab);
+  const serverUrl = useStore((s) => s.serverUrl);
   const connected = useServerHeartbeat();
 
   useEffect(() => {
@@ -43,8 +45,24 @@ export default function App() {
       {/* Server disconnected banner */}
       {!connected && (
         <div className="bg-error/90 text-surface-0 px-4 py-2 text-center text-sm font-medium">
-          Server disconnected — restart with{" "}
-          <code className="bg-surface-0/20 px-1 rounded">mlx-audiogen-app</code>
+          {serverUrl ? (
+            <>
+              Remote server unreachable ({serverUrl}) —{" "}
+              <button
+                onClick={() => setActiveTab("settings")}
+                className="underline hover:text-surface-0/80"
+              >
+                check Settings
+              </button>
+            </>
+          ) : (
+            <>
+              Server disconnected — restart with{" "}
+              <code className="bg-surface-0/20 px-1 rounded">
+                mlx-audiogen-app
+              </code>
+            </>
+          )}
         </div>
       )}
       <Header />
@@ -82,7 +100,14 @@ export default function App() {
 
             {activeTab === "suggest" && <SuggestPanel />}
 
-            {activeTab === "settings" && <LLMSettingsPanel />}
+            {activeTab === "settings" && (
+              <>
+                <ServerPanel />
+                <div className="border-t border-border pt-4">
+                  <LLMSettingsPanel />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Bottom section: always visible */}

@@ -32,6 +32,8 @@ import {
   importMemory as apiImportMemory,
   fetchServerSettings as apiFetchServerSettings,
   updateServerSettings as apiUpdateServerSettings,
+  getServerUrl,
+  setServerUrl as apiSetServerUrl,
 } from "../api/client";
 import {
   saveEntry,
@@ -144,6 +146,10 @@ interface AppState {
   stemsLoading: Record<string, boolean>;
   stemAudioUrls: Record<string, Record<string, string>>; // jobId → {stemName → blobUrl}
   requestStemSeparation: (jobId: string) => Promise<void>;
+
+  // --- Server Connection ---
+  serverUrl: string; // "" = local, or "http://host:port"
+  setServerUrl: (url: string) => void;
 }
 
 const DEFAULT_PARAMS: GenerateRequest = {
@@ -539,6 +545,15 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (e) {
       console.error("Failed to apply preset:", e);
     }
+  },
+
+  // --- Server Connection ---
+  serverUrl: getServerUrl(),
+  setServerUrl: (url: string) => {
+    apiSetServerUrl(url);
+    set({ serverUrl: url, modelsLoading: false, modelsError: null });
+    // Re-fetch models from the new server
+    get().loadModels();
   },
 
   // --- Stem Separation ---
