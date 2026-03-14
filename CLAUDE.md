@@ -30,7 +30,7 @@ uv run mlx-audiogen-convert --model stabilityai/stable-audio-open-small --output
 uv run mlx-audiogen-convert --model htdemucs --output ./converted/demucs-htdemucs
 
 # Run tests
-uv run pytest                                     # unit tests only (142 tests, ~14s)
+uv run pytest                                     # unit tests only (148 tests, ~14s)
 uv run pytest tests/test_specific.py::test_name   # single test
 uv run pytest -m integration -v                   # integration tests (real weights + GPU, ~30s)
 uv run pytest -m "not integration"                # explicit: unit tests only
@@ -457,6 +457,16 @@ In-memory sliding-window rate limiter protects the public Cloudflare deployment:
 - **General API**: 60 requests/minute per IP (all other `/api/*` endpoints)
 - **Exempt**: `/api/health` (heartbeat polling)
 - Returns HTTP 429 with descriptive error message when exceeded
+
+## Model Auto-Download (Phase 9b)
+
+Models can be auto-downloaded from HuggingFace instead of manual conversion:
+- **Model registry** (`shared/model_registry.py`): Maps 14 model names to `jasonvassallo/mlx-*` HF repos
+- **Auto-resolve**: `resolve_weights_dir()` checks: explicit path → `~/.mlx-audiogen/models/` cache → HF download
+- **Symlink caching**: Downloaded models are symlinked from `~/.mlx-audiogen/models/<name>` → HF cache
+- **Server discovery**: `launch_app()` auto-discovers models from `./converted/` AND `~/.mlx-audiogen/models/`
+- **Pipeline integration**: Both `MusicGenPipeline.from_pretrained()` and `StableAudioPipeline.from_pretrained()` use `resolve_weights_dir()` — pass a model name like `"musicgen-small"` to auto-download
+- **Backward compatible**: Existing explicit `weights_dir` paths work unchanged; `mlx-audiogen-convert` still works for custom conversions
 
 ## Weight Conversion
 

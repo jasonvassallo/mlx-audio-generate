@@ -1212,23 +1212,30 @@ def launch_app():
         search_paths.append(Path.cwd() / "converted")
         search_paths.append(Path(__file__).resolve().parent.parent.parent / "converted")
 
+    # Also check the auto-download models directory
+    from mlx_audiogen.shared.model_registry import DEFAULT_MODELS_DIR
+
+    search_paths.append(DEFAULT_MODELS_DIR)
+
     found_models = []
     for root in search_paths:
         if root.is_dir():
             for child in sorted(root.iterdir()):
                 if child.is_dir() and child.name not in (".", ".."):
+                    # Follow symlinks (auto-download creates symlinks to HF cache)
+                    target = child.resolve() if child.is_symlink() else child
                     # Quick check: does it look like a model dir?
-                    has_config = (child / "config.json").exists()
-                    has_weights = any(child.glob("*.safetensors"))
+                    has_config = (target / "config.json").exists()
+                    has_weights = any(target.glob("*.safetensors"))
                     if has_config or has_weights:
-                        found_models.append(child)
-            if found_models:
-                break
+                        if child.name not in [m.name for m in found_models]:
+                            found_models.append(child)
 
     if not found_models:
         print("No converted models found.")
-        print("Expected location: ./converted/")
+        print("Expected locations: ./converted/, ~/.mlx-audiogen/models/")
         print("Run mlx-audiogen-convert first, or pass --converted-dir")
+        print("Models can also be auto-downloaded: use --model-name <name>")
         sys.exit(1)
 
     # Register all found models

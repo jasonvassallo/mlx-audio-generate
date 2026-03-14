@@ -40,6 +40,7 @@ from transformers import AutoTokenizer
 from mlx_audiogen.shared.audio_io import load_wav
 from mlx_audiogen.shared.encodec import EncodecModel
 from mlx_audiogen.shared.hub import load_safetensors
+from mlx_audiogen.shared.model_registry import resolve_weights_dir
 from mlx_audiogen.shared.t5 import T5Config, T5EncoderModel
 
 from .chroma import extract_chroma
@@ -89,18 +90,13 @@ class MusicGenPipeline:
         Returns:
             Ready-to-use MusicGenPipeline instance.
         """
-        if weights_dir is None:
-            raise ValueError(
-                "weights_dir is required. Run `mlx-audiogen-convert "
-                "--model facebook/musicgen-small` first."
-            )
-
-        weights_path = Path(weights_dir)
-        if not weights_path.is_dir():
-            raise FileNotFoundError(
-                f"Weights directory not found: {weights_path}. "
-                "Run mlx-audiogen-convert first."
-            )
+        # Resolve weights dir: explicit path, cached model, or auto-download
+        required = ["config.json", "t5.safetensors", "decoder.safetensors"]
+        weights_path = resolve_weights_dir(
+            weights_dir,
+            model_name=None,  # inferred from weights_dir if it's a registry name
+            required_files=required,
+        )
 
         # Verify required files exist before attempting to load
         _require_file(weights_path / "config.json")
