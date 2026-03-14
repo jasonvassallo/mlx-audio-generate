@@ -7,6 +7,21 @@ ServerLauncher::ServerLauncher()
 }
 
 // ---------------------------------------------------------------------------
+// Path safety
+// ---------------------------------------------------------------------------
+
+bool ServerLauncher::isPathSafe (const juce::String& path)
+{
+    // Reject paths containing traversal components
+    if (path.contains (".."))
+        return false;
+    // Reject empty paths
+    if (path.isEmpty())
+        return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Remote config
 // ---------------------------------------------------------------------------
 
@@ -19,11 +34,29 @@ void ServerLauncher::loadRemoteConfig()
     auto text = configFile.loadFileAsString();
     auto parsed = juce::JSON::parse (text);
 
+    if (parsed.isVoid())
+    {
+        DBG ("ServerLauncher: failed to parse config.json");
+        return;
+    }
+
     if (auto* obj = parsed.getDynamicObject())
     {
         remoteUrl = obj->getProperty ("remote_url").toString();
         cfClientId = obj->getProperty ("cf_client_id").toString();
         cfClientSecret = obj->getProperty ("cf_client_secret").toString();
+
+        // Validate credentials: must be non-trivial length if present
+        if (cfClientId.isNotEmpty() && cfClientId.length() < 8)
+        {
+            DBG ("ServerLauncher: cf_client_id too short, ignoring");
+            cfClientId = {};
+        }
+        if (cfClientSecret.isNotEmpty() && cfClientSecret.length() < 8)
+        {
+            DBG ("ServerLauncher: cf_client_secret too short, ignoring");
+            cfClientSecret = {};
+        }
     }
 }
 
@@ -39,11 +72,12 @@ bool ServerLauncher::isRemoteServerAlive()
         extraHeaders = "CF-Access-Client-Id: " + cfClientId
                      + "\r\nCF-Access-Client-Secret: " + cfClientSecret;
 
+    int statusCode = 0;
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                        .withConnectionTimeoutMs (5000)
                        .withExtraHeaders (extraHeaders)
                        .withResponseHeaders (nullptr)
-                       .withStatusCode (nullptr)
+                       .withStatusCode (&statusCode)
                        .withNumRedirectsToFollow (0);
 
     auto stream = url.createInputStream (options);
@@ -51,7 +85,7 @@ bool ServerLauncher::isRemoteServerAlive()
         return false;
 
     auto response = stream->readEntireStreamAsString();
-    return response.contains ("ok");
+    return statusCode == 200 && response.contains ("ok");
 }
 
 ServerLauncher::ConnectionMode ServerLauncher::recheckConnection()
@@ -156,10 +190,11 @@ bool ServerLauncher::isServerAlive()
 {
     juce::URL url ("http://127.0.0.1:8420/api/health");
 
+    int statusCode = 0;
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                        .withConnectionTimeoutMs (2000)
                        .withResponseHeaders (nullptr)
-                       .withStatusCode (nullptr)
+                       .withStatusCode (&statusCode)
                        .withNumRedirectsToFollow (0);
 
     auto stream = url.createInputStream (options);
@@ -167,7 +202,7 @@ bool ServerLauncher::isServerAlive()
         return false;
 
     auto response = stream->readEntireStreamAsString();
-    return response.contains ("ok");
+    return statusCode == 200 && response.contains ("ok");
 }
 
 // ---------------------------------------------------------------------------
@@ -193,11 +228,18 @@ juce::String ServerLauncher::loadProjectPath()
         auto text = configFile.loadFileAsString();
         auto parsed = juce::JSON::parse (text);
 
-        if (auto* obj = parsed.getDynamicObject())
+        if (! parsed.isVoid())
         {
-            auto path = obj->getProperty ("project_path").toString();
-            if (juce::File (path).isDirectory())
-                return path;
+            if (auto* obj = parsed.getDynamicObject())
+            {
+                auto path = obj->getProperty ("project_path").toString();
+                if (isPathSafe (path) && juce::File (path).isDirectory())
+                    return path;
+            }
+        }
+        else
+        {
+            DBG ("ServerLauncher: failed to parse config.json in loadProjectPath");
         }
     }
 
@@ -214,6 +256,9 @@ juce::String ServerLauncher::loadProjectPath()
 
     for (auto& path : searchPaths)
     {
+        if (! isPathSafe (path))
+            continue;
+
         auto dir = juce::File (path);
         // Verify it's the right project by checking for pyproject.toml
         if (dir.isDirectory() && dir.getChildFile ("pyproject.toml").existsAsFile())
@@ -299,16 +344,28 @@ juce::String ServerLauncher::findUvExecutable()
 bool ServerLauncher::launchServer (const juce::String& uvPath,
                                     const juce::String& projectPath)
 {
+    // Validate paths before shell interpolation
+    if (! isPathSafe (projectPath) || ! isPathSafe (uvPath))
+    {
+        DBG ("ServerLauncher: unsafe path detected, refusing to launch");
+        return false;
+    }
+
     // Launch: uv run mlx-audiogen-app
     // Detached so it survives the plugin being unloaded
 
     // Create a launcher script that sets up the environment properly
     auto launchScript = getConfigFile().getSiblingFile ("launch-server.sh");
 
+    // Use single-quoted paths to prevent shell injection,
+    // with proper escaping of any single quotes in the path itself
+    auto safeProject = projectPath.replace ("'", "'\\''");
+    auto safeUv = uvPath.replace ("'", "'\\''");
+
     juce::String script;
     script += "#!/bin/bash\n";
-    script += "cd \"" + projectPath + "\"\n";
-    script += "\"" + uvPath + "\" run mlx-audiogen-app > ~/.mlx-audiogen/server.log 2>&1 &\n";
+    script += "cd '" + safeProject + "'\n";
+    script += "'" + safeUv + "' run mlx-audiogen-app > ~/.mlx-audiogen/server.log 2>&1 &\n";
     script += "echo $! > ~/.mlx-audiogen/server.pid\n";
 
     launchScript.replaceWithText (script);

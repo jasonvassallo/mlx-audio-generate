@@ -43,7 +43,19 @@ MLXAudioGenEditor::MLXAudioGenEditor (MLXAudioGenProcessor& p)
     instanceNameInput.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     instanceNameInput.setFont (juce::Font (14.0f, juce::Font::bold));
     instanceNameInput.setText (proc.instanceName);
-    instanceNameInput.onTextChange = [this] { proc.instanceName = instanceNameInput.getText(); };
+    instanceNameInput.onTextChange = [this] {
+        // Sanitize: allow only safe characters for use in filenames/session state
+        auto raw = instanceNameInput.getText();
+        juce::String safe;
+        for (int i = 0; i < raw.length() && i < 64; ++i)
+        {
+            auto ch = raw[i];
+            if (juce::CharacterFunctions::isLetterOrDigit (ch)
+                || ch == ' ' || ch == '-' || ch == '_')
+                safe += ch;
+        }
+        proc.instanceName = safe.isNotEmpty() ? safe : juce::String ("MLX AudioGen");
+    };
     addAndMakeVisible (instanceNameInput);
 
     // Model + Key

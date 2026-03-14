@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <sys/stat.h>
 
 // ---------------------------------------------------------------------------
 // APVTS Parameter Layout
@@ -371,7 +372,7 @@ const juce::AudioBuffer<float>& MLXAudioGenProcessor::getGeneratedAudio() const
 
 void MLXAudioGenProcessor::setActiveVariation (int idx)
 {
-    if (idx >= 0 && idx < variationCount)
+    if (idx >= 0 && idx < MAX_VARIATIONS && idx < variationCount)
     {
         activeVariation = idx;
         playbackPosition.store (0);
@@ -464,6 +465,11 @@ void MLXAudioGenProcessor::triggerGeneration()
         sidechainWritePos = 0;
     }
 
+    // Clear previous variation buffers before starting new generation
+    for (int v = 0; v < MAX_VARIATIONS; ++v)
+        variations[v].setSize (0, 0);
+    variationCount = 0;
+
     generating.store (true);
     progress.store (0.0f);
     playing.store (false);
@@ -546,7 +552,7 @@ void MLXAudioGenProcessor::runGeneration()
 
         auto sj = httpClient.fetchStatus (jobId);
         if (sj.isEmpty()) continue;
-        auto parsed = juce::JSON::parse (sj);
+        auto parsed = HttpClient::safeJsonParse (sj, "runGeneration/status");
         if (auto* so = parsed.getDynamicObject())
         {
             auto st = so->getProperty ("status").toString();
@@ -648,7 +654,7 @@ void MLXAudioGenProcessor::runVariations (int count)
 
             auto sj = httpClient.fetchStatus (jobIds[v]);
             if (sj.isEmpty()) continue;
-            auto parsed = juce::JSON::parse (sj);
+            auto parsed = HttpClient::safeJsonParse (sj, "runVariations/status");
             if (auto* so = parsed.getDynamicObject())
             {
                 auto st = so->getProperty ("status").toString();
@@ -716,6 +722,28 @@ void MLXAudioGenProcessor::removePromptTemplate (int idx)
 { if (idx >= 0 && idx < promptTemplates.size()) promptTemplates.remove (idx); }
 
 // ---------------------------------------------------------------------------
+// Filename sanitization (Finding 13)
+// ---------------------------------------------------------------------------
+
+juce::String MLXAudioGenProcessor::sanitizeFilename (const juce::String& name)
+{
+    juce::String safe;
+    for (int i = 0; i < name.length(); ++i)
+    {
+        auto ch = name[i];
+        // Allow alphanumeric, space, hyphen, underscore, period
+        if (juce::CharacterFunctions::isLetterOrDigit (ch)
+            || ch == ' ' || ch == '-' || ch == '_' || ch == '.')
+            safe += ch;
+    }
+    safe = safe.trim();
+    if (safe.isEmpty())
+        safe = "mlx-audiogen";
+    // Replace spaces with underscores for filename use
+    return safe.replaceCharacter (' ', '_');
+}
+
+// ---------------------------------------------------------------------------
 // Session sync (5.10)
 // ---------------------------------------------------------------------------
 
@@ -726,13 +754,18 @@ void MLXAudioGenProcessor::publishSessionState()
     dir.createDirectory();
     auto file = dir.getChildFile ("session.json");
 
+    // Validate session file stays within the config directory
+    if (! file.getFullPathName().startsWith (dir.getFullPathName()))
+        return;
+
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("bpm", (double) getEffectiveBpm());
     obj->setProperty ("keySignature", keySignature);
-    obj->setProperty ("instanceName", instanceName);
+    obj->setProperty ("instanceName", sanitizeFilename (instanceName));
     obj->setProperty ("timestamp", juce::Time::currentTimeMillis());
 
     file.replaceWithText (juce::JSON::toString (juce::var (obj)));
+    ::chmod (file.getFullPathName().toRawUTF8(), 0600);
 }
 
 void MLXAudioGenProcessor::readSessionState()
@@ -808,8 +841,11 @@ juce::File MLXAudioGenProcessor::writeTempAudio()
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("mlx-audiogen");
     dir.createDirectory();
     auto ts = juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S");
-    auto file = dir.getChildFile (instanceName.replaceCharacter (' ', '_') + "_" + ts + ".wav");
+    auto safeName = sanitizeFilename (instanceName);
+    auto file = dir.getChildFile (safeName + "_" + ts + ".wav");
     exportAudio (file);
+    // Restrict temp file to user-only access
+    ::chmod (file.getFullPathName().toRawUTF8(), 0600);
     lastTempFile = file;
     return file;
 }
@@ -818,11 +854,12 @@ juce::File MLXAudioGenProcessor::keepAudio()
 {
     if (! hasAudio.load()) return {};
     juce::File dest;
-    if (exportFolder.isNotEmpty()) {
+    if (exportFolder.isNotEmpty() && ServerLauncher::isPathSafe (exportFolder)) {
         auto dir = juce::File (exportFolder);
         if (dir.isDirectory()) {
             auto ts = juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S");
-            dest = dir.getChildFile (instanceName.replaceCharacter (' ', '_') + "_" + ts + ".wav");
+            auto safeName = sanitizeFilename (instanceName);
+            dest = dir.getChildFile (safeName + "_" + ts + ".wav");
         }
     }
     if (dest == juce::File()) dest = writeTempAudio();
@@ -837,7 +874,9 @@ void MLXAudioGenProcessor::discardAudio()
     playing.store (false); hasAudio.store (false); playbackPosition.store (0);
     for (int v = 0; v < MAX_VARIATIONS; ++v) variations[v].setSize (0, 0);
     variationCount = 0; pendingDecision.store (false);
-    if (lastTempFile.existsAsFile()) lastTempFile.deleteFile();
+    // Safe deletion: verify file exists, is a regular file, and is not a symlink
+    if (lastTempFile.existsAsFile() && ! lastTempFile.isSymbolicLink())
+        lastTempFile.deleteFile();
     { juce::ScopedLock l (stateLock); statusMessage = "Discarded"; }
 }
 

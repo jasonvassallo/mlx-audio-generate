@@ -27,21 +27,106 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 import numpy as np
 
 try:
-    from fastapi import FastAPI, HTTPException, UploadFile
+    from fastapi import FastAPI, HTTPException, Request, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import Response
+    from fastapi.responses import JSONResponse, Response
     from pydantic import BaseModel, Field
+    from starlette.middleware.base import BaseHTTPMiddleware
 except ImportError:
     print(
         "Error: FastAPI not installed. "
         "Install server dependencies: uv sync --extra server"
     )
     sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiter
+# ---------------------------------------------------------------------------
+
+
+class RateLimiter:
+    """In-memory sliding-window rate limiter per client IP.
+
+    Two tiers:
+      - Generation endpoints (POST /api/generate): strict limit
+      - All other API endpoints: generous limit
+    Health checks are exempt (used for heartbeat polling).
+    """
+
+    def __init__(
+        self,
+        generate_rpm: int = 10,
+        general_rpm: int = 60,
+    ) -> None:
+        self._generate_rpm = generate_rpm
+        self._general_rpm = general_rpm
+        self._lock = Lock()
+        # {ip: [timestamps]} — separate buckets per tier
+        self._generate_hits: dict[str, list[float]] = {}
+        self._general_hits: dict[str, list[float]] = {}
+
+    def _check(self, bucket: dict[str, list[float]], ip: str, limit: int) -> bool:
+        """Return True if request is allowed, False if rate-limited."""
+        now = time.monotonic()
+        window = 60.0  # 1-minute sliding window
+        with self._lock:
+            hits = bucket.get(ip, [])
+            # Prune expired entries
+            hits = [t for t in hits if now - t < window]
+            if len(hits) >= limit:
+                bucket[ip] = hits
+                return False
+            hits.append(now)
+            bucket[ip] = hits
+            return True
+
+    def allow_generate(self, ip: str) -> bool:
+        return self._check(self._generate_hits, ip, self._generate_rpm)
+
+    def allow_general(self, ip: str) -> bool:
+        return self._check(self._general_hits, ip, self._general_rpm)
+
+
+_rate_limiter = RateLimiter()
+
+# Paths exempt from rate limiting (health check for heartbeat polling)
+_RATE_LIMIT_EXEMPT = {"/api/health"}
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Apply per-IP rate limiting to API endpoints."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        path = request.url.path
+        # Only rate-limit /api/* endpoints
+        if not path.startswith("/api/") or path in _RATE_LIMIT_EXEMPT:
+            return await call_next(request)
+
+        ip = request.client.host if request.client else "unknown"
+
+        if path == "/api/generate" and request.method == "POST":
+            if not _rate_limiter.allow_generate(ip):
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": "Rate limit exceeded: max 10 generations/minute"
+                    },
+                )
+        else:
+            if not _rate_limiter.allow_general(ip):
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded: max 60 requests/minute"},
+                )
+
+        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +373,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting: protect public deployments from abuse
+app.add_middleware(RateLimitMiddleware)
 
 # ---------------------------------------------------------------------------
 # Static Files (Web UI)

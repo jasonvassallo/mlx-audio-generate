@@ -14,10 +14,10 @@ class HttpClient
 public:
     HttpClient (const juce::String& baseUrl = "http://127.0.0.1:8420");
 
-    /** Health check — returns true if server is reachable. */
+    /** Health check — returns true if server is reachable and responds 200 with "ok". */
     bool isServerAlive();
 
-    /** List available models. Returns JSON array string. */
+    /** List available models. Returns JSON array string, or empty on failure. */
     juce::String fetchModels();
 
     /**
@@ -49,20 +49,40 @@ public:
     void setServiceToken (const juce::String& clientId, const juce::String& clientSecret);
     bool hasServiceToken() const { juce::ScopedLock l (configLock); return cfClientId.isNotEmpty() && cfClientSecret.isNotEmpty(); }
 
+    // Timeout constants (milliseconds)
+    static constexpr int healthTimeoutMs    = 3000;   // Health check
+    static constexpr int defaultTimeoutMs   = 5000;   // Status polls, model list
+    static constexpr int submitTimeoutMs    = 10000;  // Generation submit
+    static constexpr int downloadTimeoutMs  = 60000;  // Audio download (large files)
+
+    /** Safely parse JSON, returning juce::var() on failure. Logs errors to DBG. */
+    static juce::var safeJsonParse (const juce::String& text, const juce::String& context);
+
 private:
     mutable juce::CriticalSection configLock;
     juce::String baseUrl;
     juce::String cfClientId;
     juce::String cfClientSecret;
 
-    /** Perform a GET request, return response body. */
-    juce::String doGet (const juce::String& path, int timeoutMs = 5000);
+    /**
+     * Perform a GET request, return response body.
+     * @param statusCode  If non-null, receives the HTTP status code.
+     */
+    juce::String doGet (const juce::String& path, int timeoutMs = defaultTimeoutMs,
+                        int* statusCode = nullptr);
 
-    /** Perform a POST request with JSON body, return response body. */
+    /**
+     * Perform a POST request with JSON body, return response body.
+     * @param statusCode  If non-null, receives the HTTP status code.
+     */
     juce::String doPost (const juce::String& path,
                          const juce::String& jsonBody,
-                         int timeoutMs = 5000);
+                         int timeoutMs = defaultTimeoutMs,
+                         int* statusCode = nullptr);
 
     /** Build Cloudflare Access auth headers (must be called under configLock). */
     juce::String getAuthHeaders() const;
+
+    /** Validate that a health response indicates a live server. */
+    static bool isValidHealthResponse (const juce::String& body, int statusCode);
 };

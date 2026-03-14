@@ -14,10 +14,12 @@ from mlx_audiogen.server.app import (
     GenerateRequest,
     JobStatus,
     PipelineCache,
+    RateLimiter,
     _cleanup_old_jobs,
     _encode_wav,
     _Job,
     _jobs,
+    _rate_limiter,
     _trim_to_exact_duration,
     _weights_dirs,
     app,
@@ -29,9 +31,13 @@ def _clean_state():
     """Reset global server state between tests."""
     _jobs.clear()
     _weights_dirs.clear()
+    _rate_limiter._generate_hits.clear()
+    _rate_limiter._general_hits.clear()
     yield
     _jobs.clear()
     _weights_dirs.clear()
+    _rate_limiter._generate_hits.clear()
+    _rate_limiter._general_hits.clear()
 
 
 @pytest.fixture
@@ -335,3 +341,49 @@ def test_encode_wav_stereo():
     audio = np.random.randn(64000).astype(np.float32)  # interleaved
     wav_bytes = _encode_wav(audio, 44100, 2)
     assert wav_bytes[:4] == b"RIFF"
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiter
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limiter_allows_under_limit():
+    limiter = RateLimiter(generate_rpm=5, general_rpm=10)
+    for _ in range(5):
+        assert limiter.allow_generate("1.2.3.4")
+    # 6th should fail
+    assert not limiter.allow_generate("1.2.3.4")
+
+
+def test_rate_limiter_separate_ips():
+    limiter = RateLimiter(generate_rpm=2, general_rpm=10)
+    assert limiter.allow_generate("1.1.1.1")
+    assert limiter.allow_generate("1.1.1.1")
+    assert not limiter.allow_generate("1.1.1.1")
+    # Different IP should still be allowed
+    assert limiter.allow_generate("2.2.2.2")
+
+
+def test_rate_limiter_general_tier():
+    limiter = RateLimiter(generate_rpm=10, general_rpm=3)
+    for _ in range(3):
+        assert limiter.allow_general("1.1.1.1")
+    assert not limiter.allow_general("1.1.1.1")
+
+
+def test_rate_limit_health_exempt(client: TestClient):
+    """Health endpoint should never be rate-limited."""
+    for _ in range(100):
+        res = client.get("/api/health")
+        assert res.status_code == 200
+
+
+def test_rate_limit_models_enforced(client: TestClient):
+    """General endpoints should return 429 after limit exceeded."""
+    # Default general limit is 60/min — hit it
+    for _ in range(60):
+        client.get("/api/models")
+    res = client.get("/api/models")
+    assert res.status_code == 429
+    assert "Rate limit" in res.json()["detail"]

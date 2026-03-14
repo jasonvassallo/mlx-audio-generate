@@ -115,6 +115,9 @@ public:
     HttpClient httpClient;
     ServerLauncher serverLauncher;
 
+    /** Sanitize a string for safe use in filenames (strips unsafe characters). */
+    static juce::String sanitizeFilename (const juce::String& name);
+
     /** Configure httpClient URL + auth based on serverLauncher connection mode. */
     void configureHttpClient();
 

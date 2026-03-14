@@ -30,7 +30,7 @@ uv run mlx-audiogen-convert --model stabilityai/stable-audio-open-small --output
 uv run mlx-audiogen-convert --model htdemucs --output ./converted/demucs-htdemucs
 
 # Run tests
-uv run pytest                                     # unit tests only (137 tests, ~14s)
+uv run pytest                                     # unit tests only (142 tests, ~14s)
 uv run pytest tests/test_specific.py::test_name   # single test
 uv run pytest -m integration -v                   # integration tests (real weights + GPU, ~30s)
 uv run pytest -m "not integration"                # explicit: unit tests only
@@ -168,6 +168,7 @@ m4l/
 - **In-memory WAV encoding**: Completed audio is stored as numpy arrays and encoded to WAV bytes on download via soundfile into `io.BytesIO`.
 - **Job cleanup**: Completed/errored jobs older than 5 minutes are cleaned up when the job limit (100) is reached.
 - **CORS**: Enabled for all origins to support localhost Max for Live / browser clients.
+- **Rate Limiting**: In-memory sliding-window per-IP rate limiter. Generation endpoints: 10 req/min. General API: 60 req/min. Health checks exempt (used for heartbeat polling). Returns HTTP 429 with descriptive error when exceeded.
 - **Server binds to `127.0.0.1` by default** (localhost only — not exposed to network).
 
 ### API Endpoints
@@ -435,6 +436,27 @@ Use specific exception types (`OSError`, `ValueError`, `KeyError`) instead of ba
 
 ### Prompt Validation
 Both pipeline `generate()` methods validate that prompts are non-empty and warn when prompts exceed 2000 characters (the T5 tokenizer truncates at 512 tokens).
+
+### Plugin Security (Phase 9a)
+The JUCE plugin implements defense-in-depth:
+- **HTTP status code validation**: All HTTP requests capture and validate status codes (200 for success)
+- **Safe JSON parsing**: `HttpClient::safeJsonParse()` validates JSON before accessing fields, logs parse errors via DBG
+- **Configurable timeouts**: 3s health, 5s status, 10s submit, 60s audio download
+- **Path traversal defense**: `ServerLauncher::isPathSafe()` rejects paths containing `..`
+- **Shell injection prevention**: Launch script uses single-quoted paths with proper escaping
+- **Filename sanitization**: `sanitizeFilename()` strips unsafe characters, limits to alphanumeric + space/hyphen/underscore
+- **Credential validation**: CF Access tokens rejected if shorter than 8 characters
+- **Temp file permissions**: `chmod 0600` on temp audio and session state files
+- **Safe file deletion**: Verifies file exists and is not a symlink before deleting
+- **Variation buffer bounds**: Explicit `MAX_VARIATIONS` check in `setActiveVariation()`
+- **Buffer clearing**: Previous variation buffers cleared before starting new generation
+
+### Rate Limiting
+In-memory sliding-window rate limiter protects the public Cloudflare deployment:
+- **Generation**: 10 requests/minute per IP (`POST /api/generate`)
+- **General API**: 60 requests/minute per IP (all other `/api/*` endpoints)
+- **Exempt**: `/api/health` (heartbeat polling)
+- Returns HTTP 429 with descriptive error message when exceeded
 
 ## Weight Conversion
 

@@ -42,6 +42,9 @@ public:
     juce::String getCfClientId() const { return cfClientId; }
     juce::String getCfClientSecret() const { return cfClientSecret; }
 
+    /** Validate a path is safe (no traversal, non-empty). */
+    static bool isPathSafe (const juce::String& path);
+
 private:
     /** Find the config file (~/.mlx-audiogen/config.json). */
     juce::File getConfigFile();

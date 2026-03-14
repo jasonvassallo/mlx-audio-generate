@@ -21,25 +21,57 @@ juce::String HttpClient::getAuthHeaders() const
     return {};
 }
 
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
+
+bool HttpClient::isValidHealthResponse (const juce::String& body, int statusCode)
+{
+    return statusCode == 200 && body.isNotEmpty() && body.contains ("ok");
+}
+
+juce::var HttpClient::safeJsonParse (const juce::String& text, const juce::String& context)
+{
+    if (text.isEmpty())
+        return {};
+
+    auto result = juce::JSON::parse (text);
+    if (result.isVoid())
+    {
+        DBG ("JSON parse error (" + context + "): " + text.substring (0, 200));
+        return {};
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 bool HttpClient::isServerAlive()
 {
-    auto response = doGet ("/api/health");
-    return response.isNotEmpty() && response.contains ("ok");
+    int statusCode = 0;
+    auto response = doGet ("/api/health", healthTimeoutMs, &statusCode);
+    return isValidHealthResponse (response, statusCode);
 }
 
 juce::String HttpClient::fetchModels()
 {
-    return doGet ("/api/models");
+    int statusCode = 0;
+    auto response = doGet ("/api/models", defaultTimeoutMs, &statusCode);
+    if (statusCode != 200)
+        return {};
+    return response;
 }
 
 juce::String HttpClient::submitGeneration (const juce::String& jsonBody)
 {
-    auto response = doPost ("/api/generate", jsonBody);
-    if (response.isEmpty())
+    int statusCode = 0;
+    auto response = doPost ("/api/generate", jsonBody, submitTimeoutMs, &statusCode);
+    if (response.isEmpty() || statusCode < 200 || statusCode >= 300)
         return {};
 
-    // Parse {"id": "abc123", "status": "queued"}
-    auto json = juce::JSON::parse (response);
+    auto json = safeJsonParse (response, "submitGeneration");
     if (auto* obj = json.getDynamicObject())
         return obj->getProperty ("id").toString();
 
@@ -48,7 +80,11 @@ juce::String HttpClient::submitGeneration (const juce::String& jsonBody)
 
 juce::String HttpClient::fetchStatus (const juce::String& jobId)
 {
-    return doGet ("/api/status/" + jobId);
+    int statusCode = 0;
+    auto response = doGet ("/api/status/" + jobId, defaultTimeoutMs, &statusCode);
+    if (statusCode != 200)
+        return {};
+    return response;
 }
 
 juce::MemoryBlock HttpClient::downloadAudio (const juce::String& jobId)
@@ -62,17 +98,21 @@ juce::MemoryBlock HttpClient::downloadAudio (const juce::String& jobId)
 
     juce::URL url (currentBase + "/api/audio/" + jobId);
 
+    int statusCode = 0;
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
-                       .withConnectionTimeoutMs (10000)
+                       .withConnectionTimeoutMs (downloadTimeoutMs)
                        .withExtraHeaders (authHeaders)
                        .withResponseHeaders (nullptr)
-                       .withStatusCode (nullptr)
+                       .withStatusCode (&statusCode)
                        .withNumRedirectsToFollow (0);
 
     auto stream = url.createInputStream (options);
 
-    if (stream == nullptr)
+    if (stream == nullptr || statusCode != 200)
+    {
+        DBG ("Audio download failed: HTTP " + juce::String (statusCode));
         return {};
+    }
 
     juce::MemoryBlock block;
     stream->readIntoMemoryBlock (block);
@@ -83,7 +123,7 @@ juce::MemoryBlock HttpClient::downloadAudio (const juce::String& jobId)
 // Private HTTP helpers
 // ---------------------------------------------------------------------------
 
-juce::String HttpClient::doGet (const juce::String& path, int timeoutMs)
+juce::String HttpClient::doGet (const juce::String& path, int timeoutMs, int* statusCode)
 {
     juce::String currentBase, authHeaders;
     {
@@ -94,14 +134,18 @@ juce::String HttpClient::doGet (const juce::String& path, int timeoutMs)
 
     juce::URL url (currentBase + path);
 
+    int localStatus = 0;
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                        .withConnectionTimeoutMs (timeoutMs)
                        .withExtraHeaders (authHeaders)
                        .withResponseHeaders (nullptr)
-                       .withStatusCode (nullptr)
+                       .withStatusCode (&localStatus)
                        .withNumRedirectsToFollow (0);
 
     auto stream = url.createInputStream (options);
+
+    if (statusCode != nullptr)
+        *statusCode = localStatus;
 
     if (stream == nullptr)
         return {};
@@ -111,7 +155,8 @@ juce::String HttpClient::doGet (const juce::String& path, int timeoutMs)
 
 juce::String HttpClient::doPost (const juce::String& path,
                                   const juce::String& jsonBody,
-                                  int timeoutMs)
+                                  int timeoutMs,
+                                  int* statusCode)
 {
     juce::String currentBase, cfHeaders;
     {
@@ -129,14 +174,18 @@ juce::String HttpClient::doPost (const juce::String& path,
     if (cfHeaders.isNotEmpty())
         extraHeaders += "\r\n" + cfHeaders;
 
+    int localStatus = 0;
     auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                        .withConnectionTimeoutMs (timeoutMs)
                        .withExtraHeaders (extraHeaders)
                        .withResponseHeaders (nullptr)
-                       .withStatusCode (nullptr)
+                       .withStatusCode (&localStatus)
                        .withNumRedirectsToFollow (0);
 
     auto stream = url.createInputStream (options);
+
+    if (statusCode != nullptr)
+        *statusCode = localStatus;
 
     if (stream == nullptr)
         return {};
