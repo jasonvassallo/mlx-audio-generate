@@ -43,6 +43,7 @@ mlx_audiogen/library/
 ```python
 @dataclass
 class TrackInfo:
+    track_id: str                # Unique ID within source (Apple Music Track ID or rekordbox TrackID)
     title: str
     artist: str
     album: str
@@ -50,7 +51,7 @@ class TrackInfo:
     bpm: float | None
     key: str | None              # Camelot notation (e.g., "4A", "10B")
     year: int | None
-    rating: int | None           # 0-100
+    rating: int | None           # Normalized to 0-100 (see Rating Normalization)
     play_count: int
     duration_seconds: float
     comments: str
@@ -59,11 +60,14 @@ class TrackInfo:
     source: str                  # "apple_music" | "rekordbox"
     loved: bool
     description: str             # Auto-generated, user-editable
+    description_edited: bool     # True if user has modified the auto-generated description
 
 @dataclass
 class PlaylistInfo:
-    name: str
+    id: str                      # URL-safe slug (sanitized from name)
+    name: str                    # Display name (may contain spaces/unicode)
     track_count: int
+    track_ids: list[str]         # References to TrackInfo.track_id
     source: str
 
 @dataclass
@@ -76,6 +80,14 @@ class LibrarySource:
     playlist_count: int | None
     last_loaded: str | None      # ISO timestamp
 ```
+
+### Rating Normalization
+
+Both sources are normalized to a unified 0-100 scale:
+- **Apple Music**: Already 0-100 (0=unrated, 20/40/60/80/100 = 1-5 stars)
+- **rekordbox**: 0-255 → normalize via `round(rating * 100 / 255)`. rekordbox uses 0/51/102/153/204/255 for 0-5 stars
+
+The UI displays ratings as 0-5 stars (dividing by 20). API filters use the 0-100 scale.
 
 ### Parsing Strategy
 
@@ -111,7 +123,7 @@ class LibrarySource:
 1. URL-decode the path (`urllib.parse.unquote`)
 2. Strip scheme (`file://localhost/` → `/`, `file:///` → `/`)
 3. Check if path exists on disk
-4. For iCloud files: detect `.icloud` placeholder files → mark as unavailable
+4. For iCloud files: check for `.icloud` placeholder. macOS stores evicted iCloud files as hidden files with the pattern `.{original_filename}.icloud` in the same directory. To detect: if the resolved path doesn't exist, check for `os.path.join(dirname, f".{basename}.icloud")`. If the placeholder exists, mark `file_available=False` (file is in iCloud but not cached locally)
 5. Auto-discover cloud providers at `~/Library/CloudStorage/`:
    - Dropbox: `Dropbox/`, `Dropbox-*/`
    - Google Drive: `GoogleDrive-*/`
@@ -168,6 +180,24 @@ Saved training selections at `~/.mlx-audiogen/collections/{name}.json`:
 
 Collections are independent of LoRA adapters — one collection can produce multiple adapters (different profiles), and collections can be edited and re-used.
 
+### Collection → Training Pipeline Bridge
+
+The existing `lora/dataset.py` `scan_dataset()` expects a single directory with audio files + optional `metadata.jsonl`. Collections store scattered file references. The bridge works as follows:
+
+1. **`collections.py` provides `collection_to_training_data()`** — converts a collection into the `list[dict]` format that `LoRATrainer` already accepts:
+   ```python
+   def collection_to_training_data(collection_path: Path) -> list[dict[str, str]]:
+       """Convert a collection to training data entries.
+
+       Returns list of {"file": "/abs/path/to/audio.wav", "text": "description"}
+       matching the format returned by scan_dataset().
+       Skips tracks where file_available is False.
+       """
+   ```
+2. **Server's `POST /api/train` gains a `collection` field** (alternative to `data_dir`). When `collection` is provided, the server calls `collection_to_training_data()` instead of `scan_dataset()`.
+3. **No temp files needed** — the training pipeline already works with a list of `{"file": path, "text": description}` dicts. Collections just provide a different way to build that list.
+4. **Validation**: before training, verify all referenced audio files still exist. Report which tracks will be skipped (unavailable) and error if zero tracks have available audio.
+
 ## Server API
 
 ### Library Source Endpoints
@@ -175,7 +205,8 @@ Collections are independent of LoRA adapters — one collection can produce mult
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/library/sources` | List configured library sources |
-| `POST` | `/api/library/sources` | Add/update a library source |
+| `POST` | `/api/library/sources` | Add a new library source (auto-generates ID) |
+| `PUT` | `/api/library/sources/{id}` | Update an existing source (path, label) |
 | `DELETE` | `/api/library/sources/{id}` | Remove a library source |
 | `POST` | `/api/library/scan/{id}` | Parse/refresh a library source |
 
@@ -185,7 +216,7 @@ Collections are independent of LoRA adapters — one collection can produce mult
 |--------|------|-------------|
 | `GET` | `/api/library/playlists/{id}` | List playlists for a source |
 | `GET` | `/api/library/tracks/{id}` | List/search/filter/sort tracks |
-| `GET` | `/api/library/playlist-tracks/{id}/{playlist}` | Tracks in a playlist |
+| `GET` | `/api/library/playlist-tracks/{source_id}/{playlist_id}` | Tracks in a playlist (playlist_id is the URL-safe slug from PlaylistInfo.id) |
 
 **Track query parameters:**
 - `q` — free text search (title, artist, album, comments)
@@ -206,7 +237,7 @@ Collections are independent of LoRA adapters — one collection can produce mult
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/library/describe` | Generate descriptions for tracks |
+| `POST` | `/api/library/describe` | Generate descriptions for tracks (body: `{"source_id": "...", "track_ids": [...], "mode": "template"|"llm"}`) |
 | `POST` | `/api/library/suggest-name` | AI-suggest adapter name |
 | `POST` | `/api/library/generate-prompt` | Analyze tracks → generate prompt |
 
@@ -294,6 +325,13 @@ New "Source" dropdown at top:
 
 Color relationships: warm cluster (identity), cool cluster (sonic character), accent cluster (feel), neutral (context).
 
+**Tag schema migration plan:**
+- Server: expand `TAG_DATABASE` in `prompt_suggestions.py` from 5 to 14 categories. `GET /api/tags` returns the full schema. Existing 5 categories retain their tag entries; 9 new categories start empty (populated by library analysis and future web enrichment)
+- Frontend: `TagAutocomplete.tsx` `CATEGORY_COLORS` map updated from 5 to 14 entries. Existing components (`SuggestPanel`, `EnhancePreview`) work unchanged — they only render tags the server returns, so they'll naturally display new categories as the server populates them
+- Color adjustment: existing "era" was `purple-500` → reassigned to `Slate #64748b`. This is intentional — era is contextual (muted), not sonic (vibrant). `TagAutocomplete` is the single source of truth for colors; update it once, all consumers follow
+
+**Perceptual overlap note:** Amber/Yellow/Orange are close in hue. In the UI, Genre (amber) and Rating (yellow) rarely appear in the same tag cloud (rating is shown as stars, not a tag pill). Sub-genre (orange) appears alongside Genre (amber) but the label text provides disambiguation.
+
 ## "Generate Like This" Flow
 
 1. **Select tracks** in Library tab (playlist or manual selection)
@@ -326,14 +364,23 @@ Color relationships: warm cluster (identity), cool cluster (sonic character), ac
 - **Collection paths**: Restricted to `~/.mlx-audiogen/collections/`
 - **Collection names**: Validated with `^[a-zA-Z0-9_-]{1,64}$` regex
 - **Input validation**: Pydantic models for all request bodies with field constraints
+- **Rate limiting**: Library browsing endpoints use "general" tier (60 req/min). LLM-invoking endpoints (`/api/library/describe` in LLM mode, `/api/library/suggest-name`, `/api/library/generate-prompt` in LLM mode) use "generate" tier (10 req/min)
 
 ## Error Handling
 
 - Missing/moved audio files: `file_available: false`, gray dot in UI, training skips gracefully
 - Corrupt XML: clear error message ("Could not parse — try re-exporting from rekordbox/Apple Music")
-- iCloud placeholder files (`.icloud`): detected, reported as unavailable
+- iCloud placeholder files: detected via `.{filename}.icloud` companion check, reported as unavailable with hint ("Download from iCloud to enable audio analysis")
 - Empty playlists: shown in list but disabled for actions
 - Unicode track names: fully supported (UTF-8 throughout)
+- Apple Music `Loved` vs `Favorited`: parser handles both keys (Apple renamed the field in recent macOS versions), maps to `TrackInfo.loved`
+
+### Path Portability Note
+
+Collection JSON files store absolute file paths (e.g., `/Users/jasonvassallo/Music/...`). This means collections are **not portable across machines**. When the user migrates to a new Mac (planned M5 Pro):
+- Collections will have stale paths — the collection loader should detect this (check `file_available` on load) and warn
+- A future "re-link" feature could scan for matching filenames in configured library sources
+- For now, this is acceptable — re-exporting from Apple Music/rekordbox and re-creating the collection on the new machine is straightforward
 
 ## Testing
 
@@ -367,12 +414,14 @@ Color relationships: warm cluster (identity), cool cluster (sonic character), ac
 
 ### Modified files:
 - `pyproject.toml` — add `defusedxml` dependency
-- `.gitignore` — add `Library.xml`, `rekordbox.xml`
-- `mlx_audiogen/server/app.py` — add 17 new endpoints
+- `.gitignore` — add `Library.xml`, `rekordbox.xml` (already done)
+- `mlx_audiogen/server/app.py` — add 18 new endpoints (library routes in a clearly commented section, like existing LoRA section). Note: this brings app.py to ~48 routes total. If it becomes unwieldy, consider extracting library routes into `server/library_routes.py` using FastAPI's `APIRouter` — but only if needed, not preemptively
+- `mlx_audiogen/shared/prompt_suggestions.py` — expand `TAG_DATABASE` from 5 to 14 categories
 - `web/src/api/client.ts` — add library + collection API wrappers
 - `web/src/store/useStore.ts` — add library state
 - `web/src/types/api.ts` — add library/collection types
 - `web/src/components/App.tsx` — add Library tab
 - `web/src/components/TrainPanel.tsx` — add Collection source type
 - `web/src/components/TabBar.tsx` — add Library tab
+- `web/src/components/TagAutocomplete.tsx` — expand `CATEGORY_COLORS` from 5 to 14 categories
 - `CLAUDE.md` — document new module and endpoints
