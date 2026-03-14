@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useStore } from "../store/useStore";
+import { enrichTracks } from "../api/client";
+import type { EnrichmentStatus } from "../types/api";
 
 /** Format seconds as mm:ss. */
 function fmtDuration(s: number): string {
@@ -29,6 +31,30 @@ function AvailDot({ available }: { available: boolean }) {
       }`}
       title={available ? "File available" : "File not found"}
     />
+  );
+}
+
+/** Enrichment status dots: green = fetched, gray = not. */
+function EnrichmentDots({ status }: { status?: EnrichmentStatus }) {
+  const s = status ?? "none";
+  const mb = s === "complete";
+  const lf = s === "complete" || s === "partial";
+  const dc = s === "complete";
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${mb ? "bg-emerald-500" : "bg-zinc-700"}`}
+        title="MusicBrainz"
+      />
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${lf ? "bg-emerald-500" : "bg-zinc-700"}`}
+        title="Last.fm"
+      />
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${dc ? "bg-emerald-500" : "bg-zinc-700"}`}
+        title="Discogs"
+      />
+    </span>
   );
 }
 
@@ -277,6 +303,7 @@ export function LibraryTrackTable({ onTrainOnThese }: { onTrainOnThese?: () => v
   const generate = useStore((s) => s.generate);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [enriching, setEnriching] = useState(false);
 
   // Debounced search
   useEffect(() => {
@@ -319,6 +346,20 @@ export function LibraryTrackTable({ onTrainOnThese }: { onTrainOnThese?: () => v
     clearGenerateLikeResult();
     setActiveTab("generate");
   }, [generateLikeResult, setParam, clearGenerateLikeResult, setActiveTab]);
+
+  const handleEnrichSelected = useCallback(async () => {
+    if (!activeSourceId || selectedIds.size === 0) return;
+    setEnriching(true);
+    try {
+      await enrichTracks({
+        track_ids: Array.from(selectedIds),
+        source_id: activeSourceId,
+      });
+    } catch {
+      // Ignore — server may not support enrichment yet
+    }
+    setEnriching(false);
+  }, [activeSourceId, selectedIds]);
 
   if (!activeSourceId) {
     return (
@@ -426,6 +467,12 @@ export function LibraryTrackTable({ onTrainOnThese }: { onTrainOnThese?: () => v
                 <SortHeader label="Key" field="key" currentSort={searchParams.sort} currentOrder={searchParams.order ?? "asc"} onSort={handleSort} className="w-12" />
                 <SortHeader label="Dur" field="duration_seconds" currentSort={searchParams.sort} currentOrder={searchParams.order ?? "asc"} onSort={handleSort} className="w-14 text-right" />
                 <SortHeader label="Rating" field="rating" currentSort={searchParams.sort} currentOrder={searchParams.order ?? "asc"} onSort={handleSort} className="w-20" />
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-zinc-500 w-16">
+                  Enriched
+                </th>
+                <th className="px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-zinc-500 w-24">
+                  Tags
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -472,6 +519,18 @@ export function LibraryTrackTable({ onTrainOnThese }: { onTrainOnThese?: () => v
                     <td className="px-2 py-1.5">
                       <Stars rating={track.rating} />
                     </td>
+                    <td className="px-2 py-1.5">
+                      <EnrichmentDots status={track.enrichment_status} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {(track.enrichment_status ?? "none") === "none" ? (
+                        <span className="italic text-zinc-600 text-[10px]">Not enriched</span>
+                      ) : (
+                        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400">
+                          {track.enrichment_status}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -495,6 +554,13 @@ export function LibraryTrackTable({ onTrainOnThese }: { onTrainOnThese?: () => v
             className="rounded border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-500"
           >
             Train on These
+          </button>
+          <button
+            onClick={handleEnrichSelected}
+            disabled={enriching}
+            className="rounded bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-500 disabled:opacity-50"
+          >
+            {enriching ? "Enriching..." : "Enrich Selected"}
           </button>
           <div className="flex-1" />
           <button

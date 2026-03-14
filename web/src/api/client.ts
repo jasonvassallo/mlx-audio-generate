@@ -1,7 +1,10 @@
 import type {
   CollectionFull,
   CollectionSummary,
+  CredentialStatus,
   EnhanceResponse,
+  EnrichmentJobStatus,
+  EnrichmentStats,
   GenerateRequest,
   GenerateResponse,
   JobInfo,
@@ -19,6 +22,7 @@ import type {
   ServerSettings,
   StemResult,
   TagDatabase,
+  TasteProfile,
   TrackSearchResult,
   TrainRequest,
   TrainStatus,
@@ -467,4 +471,105 @@ export async function importCollection(
     throw new Error(`API error ${res.status}: ${body}`);
   }
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9g-3: Credentials
+// ---------------------------------------------------------------------------
+
+/** Get credential configuration status for each enrichment service. */
+export function getCredentialStatus(): Promise<CredentialStatus> {
+  return request<CredentialStatus>("/credentials/status");
+}
+
+/** Set an API key for an enrichment service. */
+export function setCredential(
+  service: string,
+  apiKey: string,
+): Promise<void> {
+  return request("/credentials/" + encodeURIComponent(service), {
+    method: "POST",
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+/** Delete an API key for an enrichment service. */
+export function deleteCredential(service: string): Promise<void> {
+  return request("/credentials/" + encodeURIComponent(service), {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9g-3: Enrichment
+// ---------------------------------------------------------------------------
+
+/** Enrich tracks with metadata from external services. */
+export function enrichTracks(body: {
+  track_ids?: string[];
+  source_id?: string;
+  tracks?: { artist: string; title: string }[];
+}): Promise<{ job_id: string }> {
+  return request("/enrich/tracks", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Get enrichment job status. */
+export function getEnrichmentStatus(): Promise<EnrichmentJobStatus> {
+  return request<EnrichmentJobStatus>("/enrich/status");
+}
+
+/** Enrich all tracks from a library source. */
+export function enrichAll(
+  sourceId: string,
+): Promise<{ job_id: string }> {
+  return request(`/enrich/all/${encodeURIComponent(sourceId)}`, {
+    method: "POST",
+  });
+}
+
+/** Cancel running enrichment job. */
+export function cancelEnrichment(): Promise<void> {
+  return request("/enrich/cancel", { method: "POST" });
+}
+
+/** Get enrichment data for a single track. */
+export function getTrackEnrichment(
+  trackId: number,
+): Promise<Record<string, unknown>> {
+  return request(`/enrich/track/${trackId}`);
+}
+
+/** Get enrichment statistics. */
+export function getEnrichmentStats(): Promise<EnrichmentStats> {
+  return request<EnrichmentStats>("/enrich/stats");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9g-3: Taste Profile
+// ---------------------------------------------------------------------------
+
+/** Get the user's taste profile. */
+export function getTasteProfile(): Promise<TasteProfile> {
+  return request<TasteProfile>("/taste/profile");
+}
+
+/** Refresh the taste profile from current data. */
+export function refreshTasteProfile(): Promise<TasteProfile> {
+  return request<TasteProfile>("/taste/refresh", { method: "POST" });
+}
+
+/** Get taste-based prompt suggestions. */
+export function getTasteSuggestions(): Promise<{ suggestions: string[] }> {
+  return request<{ suggestions: string[] }>("/taste/suggestions");
+}
+
+/** Set manual taste overrides. */
+export function setTasteOverrides(text: string): Promise<TasteProfile> {
+  return request<TasteProfile>("/taste/overrides", {
+    method: "PUT",
+    body: JSON.stringify({ text }),
+  });
 }

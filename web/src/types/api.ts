@@ -216,6 +216,7 @@ export interface LibraryTrackInfo {
   loved: boolean;
   description: string;
   description_edited: boolean;
+  enrichment_status?: EnrichmentStatus;
 }
 
 /** Playlist from a library source. */
@@ -297,4 +298,64 @@ export interface LibrarySearchParams {
   order?: "asc" | "desc";
   offset?: number;
   limit?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9g-3: Enrichment + Taste
+// ---------------------------------------------------------------------------
+
+/** Enrichment status for a track. */
+export type EnrichmentStatus = "none" | "partial" | "complete" | "stale";
+
+/** Credential service status. */
+export interface CredentialStatus {
+  musicbrainz: boolean;
+  lastfm: boolean;
+  discogs: boolean;
+}
+
+/** Enrichment job progress. */
+export interface EnrichmentJobStatus {
+  job_id?: string;
+  status: "idle" | "running" | "done" | "error" | "cancelled";
+  total: number;
+  completed: number;
+  errors: number;
+  current_track?: string | null;
+}
+
+/** Enrichment statistics. */
+export interface EnrichmentStats {
+  total_tracks: number;
+  musicbrainz_count: number;
+  lastfm_count: number;
+  discogs_count: number;
+}
+
+/** Weighted tag for taste profile. */
+export interface WeightedTag {
+  name: string;
+  weight: number;
+}
+
+/** User taste profile. */
+export interface TasteProfile {
+  top_genres: WeightedTag[];
+  top_artists: WeightedTag[];
+  bpm_range: [number, number];
+  key_preferences: WeightedTag[];
+  era_distribution: Record<string, number>;
+  mood_profile: WeightedTag[];
+  style_tags: WeightedTag[];
+  gen_genres: WeightedTag[];
+  gen_moods: WeightedTag[];
+  gen_instruments: WeightedTag[];
+  kept_ratio: number;
+  avg_duration: number;
+  preferred_models: string[];
+  library_track_count: number;
+  generation_count: number;
+  last_updated: string;
+  version: number;
+  overrides: string;
 }
