@@ -254,27 +254,26 @@ Interactive API docs at `http://localhost:8420/docs` when running.
 
 ## Web UI
 
-`web/` is a React + Vite + TypeScript SPA with a dark/pro audio aesthetic (DAW-inspired). It communicates with the FastAPI server via the same REST API used by the Max for Live client.
+`web/` is a React + Vite + TypeScript SPA with a dark/pro audio aesthetic (DAW-inspired).
 
 - **Tech stack**: React 19, TypeScript, Vite 6, Tailwind CSS v4, Zustand 5
 - **Node management**: Volta pins Node 22 and npm 10 in `web/package.json`
 - **Dev mode**: `npm run dev` starts Vite on :3000, proxies `/api/*` to FastAPI on :8420
 - **Production**: `npm run build` outputs to `web/dist/`, served by FastAPI's static file mount
-- **Layout**: Three-layer vertical: Header at top, main area (tabbed sidebar w-80 + context panel), TransportBar at bottom. Sidebar tabs: Generate (model + prompt + LoRA selector + params + generate button), Suggest (prompt analysis + presets), Train (LoRA training with folder or collection source + profile cards + progress + loss chart), Library (source selector + playlist browser → track table replaces history in main area), Settings (server URL + history retention + LLM config + LoRA management). TransportBar is a fixed-height DAW-style transport strip with Master BPM, pitch mode toggle, audio device selector, connection status, and generation progress
-- **Components**: TabBar, TransportBar (BPM/pitch/device/status), ServerPanel, SuggestPanel (analysis tags + presets), ParameterPanel (sliders + output_mode), GenerateButton, AudioPlayer (waveform + setSinkId), HistoryPanel (jobs + MIDI + stems), LibraryPanel (sidebar playlists + sortable track table + Generate Like This / Train on These), MetadataEditor (collection curation + AI descriptions), AudioDeviceSelector, Header, EnhancePreview, TagAutocomplete, LLMSettingsPanel, LoRASelector, TrainPanel (profiles + progress + loss chart)
+- **Layout**: Header → sidebar (5 tabs: Generate/Suggest/Train/Library/Settings, w-80) + main area (history or track table) → TransportBar (BPM/pitch/device/status/progress)
+- **Components**: TabBar, TransportBar, ServerPanel, SuggestPanel (analysis tags + presets), ParameterPanel (sliders + output_mode), GenerateButton, AudioPlayer (waveform + setSinkId), HistoryPanel (jobs + MIDI + stems), LibraryPanel (sidebar playlists + sortable track table + Generate Like This / Train on These), MetadataEditor (collection curation + AI descriptions), AudioDeviceSelector, Header, EnhancePreview, TagAutocomplete, LLMSettingsPanel, LoRASelector, TrainPanel (folder/collection source + profiles + progress + loss chart)
 - **State**: Zustand store manages models, params, jobs, history, suggestions, presets, stems, output_mode, tabs, enhance flow, settings, tags, memory, LLM, server URL, LoRAs, library (sources/playlists/tracks with search/sort/filter), collections, and "Generate Like This" results
-- **API client**: Typed fetch wrappers in `src/api/client.ts` with dynamic server URL. Covers all server endpoints: generation, suggestions, presets, stems, MIDI, enhance, tags, LLM, memory, settings, LoRA, library CRUD, and collections
-- **Prompt Suggestions**: `POST /api/suggest` returns analysis tags (genres, moods, instruments, missing elements) + refined prompt suggestions. UI shows colored tags + suggestion cards with Use/Copy buttons
-- **Presets**: Save/load `.mlxpreset` JSON files from `~/.mlx-audiogen/presets/`. UI validates names with `^[a-zA-Z0-9_-]{1,64}$` regex
-- **Stem Separation**: `POST /api/separate/{id}` splits audio into stems. UI shows color-coded inline `<audio>` players. Blob URLs eagerly downloaded to survive server's 5-minute job cleanup
-- **MIDI Output**: `output_mode` dropdown (audio/midi/both) in ParameterPanel. History shows MIDI download button when available
-- **Audio output**: Web Audio API plays through system default; AudioDeviceSelector allows choosing a specific output device via `setSinkId()`
+- **Prompt Suggestions**: UI shows colored analysis tags + suggestion cards with Use/Copy buttons
+- **Presets**: `.mlxpreset` JSON files in `~/.mlx-audiogen/presets/`. Name validated with `^[a-zA-Z0-9_-]{1,64}$`
+- **Stem Separation**: Color-coded inline `<audio>` players. Blob URLs eagerly downloaded to survive server's 5-minute cleanup
+- **MIDI Output**: `output_mode` dropdown (audio/midi/both) in ParameterPanel. History shows MIDI download when available
+- **Audio output**: AudioDeviceSelector allows choosing output device via `setSinkId()`
 - **Launch**: `uv run mlx-audiogen-server --weights-dir <path> --open` starts server and opens browser
-- **LLM Enhancement**: `POST /api/enhance` enriches prompts via local LLM (`mlx-lm`) or template fallback. UI shows EnhancePreview card with analysis tags + Accept & Generate / Edit / Use Original buttons. Enhance button appears in PromptInput when AI enhance is enabled in server settings
-- **Tag Autocomplete**: TagAutocomplete dropdown appears below prompt textarea, filtered by last typed token (min 2 chars). Tags are color-coded by category: genre (amber), mood (emerald), instrument (sky), era (purple), production (rose)
-- **Prompt Memory**: Persisted at `~/.mlx-audiogen/prompt_memory.json` (max 2000 entries). Style profile auto-derived from history (top genres/moods/instruments, preferred duration). Export/Import/Clear via LLMSettingsPanel
-- **Server Settings**: LLM model selection, AI enhance toggle, history context slider (0-200). Persisted at `~/.mlx-audiogen/settings.json`. Separate from client-side IndexedDB settings (retention/BPM/pitch)
-- **Remote Server**: ServerPanel in Settings tab allows pointing the UI at a remote mlx-audiogen server (e.g., `http://192.168.1.100:8420`). URL persisted in localStorage (`mlx_audiogen_server_url`). Connection tested via `/api/health` before applying. Heartbeat hook auto-reconnects when URL changes. Disconnect banner shows remote URL + link to Settings. Server must run with `--host 0.0.0.0` for remote access. CORS is already enabled for all origins
+- **LLM Enhancement**: EnhancePreview card with analysis tags + Accept & Generate / Edit / Use Original. Enhance button in PromptInput when AI enhance is enabled
+- **Tag Autocomplete**: Dropdown filtered by last typed token (min 2 chars). Color-coded: genre (amber), mood (emerald), instrument (sky), era (purple), production (rose)
+- **Prompt Memory**: `~/.mlx-audiogen/prompt_memory.json` (max 2000 entries). Style profile auto-derived. Export/Import/Clear via LLMSettingsPanel
+- **Server Settings**: `~/.mlx-audiogen/settings.json` (LLM model, AI enhance, history context 0-200). Separate from client-side IndexedDB settings (retention/BPM/pitch)
+- **Remote Server**: ServerPanel in Settings tab. URL persisted in localStorage. Connection tested via `/api/health`. Heartbeat auto-reconnects. Server needs `--host 0.0.0.0` for remote access
 
 ## Cloud Deployment (Mac Mini)
 
