@@ -56,3 +56,6 @@ output/
 # Music library exports (user-specific, used for development/training)
 Library.xml
 rekordbox.xml
+
+# Enrichment cache (user-specific)
+enrichment.db
