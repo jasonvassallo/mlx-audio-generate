@@ -52,3 +52,7 @@ output/
 
 # Superpowers
 .superpowers/
+
+# Music library exports (user-specific, used for development/training)
+Library.xml
+rekordbox.xml
