@@ -1265,6 +1265,123 @@ async def import_collection(file: UploadFile) -> dict:
         raise HTTPException(400, str(e))
 
 
+# ---------------------------------------------------------------------------
+# Library AI Endpoints (Phase 9g-2)
+# ---------------------------------------------------------------------------
+
+
+class DescribeRequest(BaseModel):
+    """Request body for POST /api/library/describe."""
+
+    source_id: str = Field(..., min_length=1, max_length=64)
+    track_ids: list[str] = Field(..., min_items=1, max_length=500)
+    mode: str = Field(default="template", pattern=r"^(template|llm)$")
+
+
+class SuggestNameRequest(BaseModel):
+    """Request body for POST /api/library/suggest-name."""
+
+    source_id: str = Field(..., min_length=1, max_length=64)
+    track_ids: list[str] = Field(..., min_items=1, max_length=500)
+
+
+class GeneratePromptRequest(BaseModel):
+    """Request body for POST /api/library/generate-prompt."""
+
+    source_id: str = Field(..., min_length=1, max_length=64)
+    track_ids: list[str] = Field(..., min_items=1, max_length=500)
+
+
+@app.post("/api/library/describe")
+def describe_library_tracks(req: DescribeRequest) -> dict:
+    """Generate text descriptions for selected tracks from metadata.
+
+    In template mode, uses genre/BPM/key/artist to build descriptions.
+    In LLM mode, defers to the existing enhance_with_llm pattern.
+    """
+    from mlx_audiogen.library.description_gen import generate_description
+
+    cache = _get_library_cache()
+    data = cache._data.get(req.source_id, {})
+    tracks = data.get("tracks", {})
+
+    descriptions: dict[str, str] = {}
+    for tid in req.track_ids:
+        track = tracks.get(tid)
+        if track is None:
+            continue
+        if req.mode == "template":
+            descriptions[tid] = generate_description(track)
+        else:
+            # LLM mode: use template as fallback, LLM enhancement deferred
+            # to /api/enhance endpoint (client-side orchestration)
+            descriptions[tid] = generate_description(track)
+
+    return {"descriptions": descriptions, "mode": req.mode}
+
+
+@app.post("/api/library/suggest-name")
+def suggest_adapter_name(req: SuggestNameRequest) -> dict:
+    """Suggest a LoRA adapter name based on selected tracks' metadata."""
+    import re
+    from collections import Counter
+
+    cache = _get_library_cache()
+    data = cache._data.get(req.source_id, {})
+    tracks_dict = data.get("tracks", {})
+
+    selected = [tracks_dict[tid] for tid in req.track_ids if tid in tracks_dict]
+    if not selected:
+        return {"name": "my-style", "analysis": {}}
+
+    genres = [t.genre.lower() for t in selected if t.genre]
+    artists = [t.artist.lower() for t in selected if t.artist]
+
+    top_genre = Counter(genres).most_common(1)
+    top_artist = Counter(artists).most_common(1)
+
+    parts: list[str] = []
+    if top_genre:
+        # Slugify: "Deep House" -> "deep-house"
+        parts.append(re.sub(r"[^a-z0-9]+", "-", top_genre[0][0]).strip("-"))
+    if top_artist:
+        parts.append(re.sub(r"[^a-z0-9]+", "-", top_artist[0][0]).strip("-"))
+    if not parts:
+        parts.append("my")
+    parts.append("style")
+
+    name = "-".join(parts)[:64]
+
+    return {
+        "name": name,
+        "analysis": {
+            "top_genre": top_genre[0][0] if top_genre else None,
+            "top_artist": top_artist[0][0] if top_artist else None,
+            "track_count": len(selected),
+        },
+    }
+
+
+@app.post("/api/library/generate-prompt")
+def generate_prompt_from_tracks(req: GeneratePromptRequest) -> dict:
+    """Analyze selected tracks and generate a prompt capturing their vibe."""
+    from mlx_audiogen.library.description_gen import generate_playlist_prompt
+
+    cache = _get_library_cache()
+    data = cache._data.get(req.source_id, {})
+    tracks_dict = data.get("tracks", {})
+
+    selected = [tracks_dict[tid] for tid in req.track_ids if tid in tracks_dict]
+    if not selected:
+        return {
+            "prompt": "instrumental music",
+            "track_count": 0,
+            "available_count": 0,
+        }
+
+    return generate_playlist_prompt(selected)
+
+
 @app.post("/api/generate")
 def submit_generation(req: GenerateRequest) -> GenerateResponse:
     """Submit a generation request. Returns immediately with a job ID."""
