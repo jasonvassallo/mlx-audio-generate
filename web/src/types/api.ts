@@ -165,7 +165,8 @@ export interface LoRAInfo {
 
 /** LoRA training request for POST /api/train. */
 export interface TrainRequest {
-  data_dir: string;
+  data_dir?: string;
+  collection?: string;
   base_model: string;
   name: string;
   profile?: string;
@@ -189,4 +190,111 @@ export interface TrainStatus {
   loss: number;
   best_loss: number | null;
   progress: number;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9g-2: Library Scanner
+// ---------------------------------------------------------------------------
+
+/** Track metadata from a music library source. */
+export interface LibraryTrackInfo {
+  track_id: string;
+  title: string;
+  artist: string;
+  album: string;
+  genre: string;
+  bpm: number | null;
+  key: string | null;
+  year: number | null;
+  rating: number | null;
+  play_count: number;
+  duration_seconds: number;
+  comments: string;
+  file_path: string | null;
+  file_available: boolean;
+  source: string;
+  loved: boolean;
+  description: string;
+  description_edited: boolean;
+}
+
+/** Playlist from a library source. */
+export interface PlaylistInfo {
+  id: string;
+  name: string;
+  track_count: number;
+  track_ids: string[];
+  source: string;
+}
+
+/** A configured music library source (Apple Music or rekordbox XML). */
+export interface LibrarySource {
+  id: string;
+  type: "apple_music" | "rekordbox";
+  path: string;
+  label: string;
+  track_count: number | null;
+  playlist_count: number | null;
+  last_loaded: string | null;
+}
+
+/** Summary of a saved collection (returned from list endpoint). */
+export interface CollectionSummary {
+  name: string;
+  track_count: number;
+  source: string;
+  playlist: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** Full collection with track data. */
+export interface CollectionFull {
+  name: string;
+  created_at: string;
+  updated_at: string;
+  source: string;
+  playlist: string;
+  tracks: LibraryTrackInfo[];
+}
+
+/** Paginated track search result from GET /api/library/tracks/{id}. */
+export interface TrackSearchResult {
+  tracks: LibraryTrackInfo[];
+  count: number;
+  offset: number;
+  limit: number;
+}
+
+/** Analysis + generated prompt from POST /api/library/generate-prompt. */
+export interface PlaylistAnalysis {
+  bpm_median: number | null;
+  bpm_range: [number, number] | null;
+  top_keys: string[];
+  top_genres: string[];
+  top_artists: string[];
+  year_range: [number, number] | null;
+  track_count: number;
+  available_count: number;
+  prompt: string;
+}
+
+/** Track search/filter query parameters. */
+export interface LibrarySearchParams {
+  q?: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  key?: string;
+  bpm_min?: number;
+  bpm_max?: number;
+  year_min?: number;
+  year_max?: number;
+  rating_min?: number;
+  loved?: boolean;
+  available?: boolean;
+  sort?: string;
+  order?: "asc" | "desc";
+  offset?: number;
+  limit?: number;
 }

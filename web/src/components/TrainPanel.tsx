@@ -8,6 +8,7 @@ import {
 import type { TrainStatus } from "../types/api";
 
 type Profile = "quick" | "balanced" | "deep";
+type Source = "folder" | "collection";
 
 const PROFILES: Record<Profile, { label: string; desc: string }> = {
   quick: { label: "Quick & Light", desc: "rank 8, q+v only" },
@@ -18,9 +19,15 @@ const PROFILES: Record<Profile, { label: string; desc: string }> = {
 export default function TrainPanel() {
   const models = useStore((s) => s.models);
   const fetchLoras = useStore((s) => s.fetchLoras);
+  const collections = useStore((s) => s.collections);
+  const loadCollections = useStore((s) => s.loadCollections);
+
+  // Source selector
+  const [source, setSource] = useState<Source>("folder");
 
   // Form state
   const [dataDir, setDataDir] = useState("");
+  const [collectionName, setCollectionName] = useState("");
   const [name, setName] = useState("");
   const [baseModel, setBaseModel] = useState("musicgen-small");
   const [profile, setProfile] = useState<Profile>("balanced");
@@ -41,6 +48,20 @@ export default function TrainPanel() {
 
   // Validate name
   const nameValid = /^[a-zA-Z0-9_-]{1,64}$/.test(name);
+
+  // Load collections when switching to collection source
+  useEffect(() => {
+    if (source === "collection") {
+      loadCollections();
+    }
+  }, [source, loadCollections]);
+
+  // Auto-set adapter name from collection
+  useEffect(() => {
+    if (source === "collection" && collectionName && !name) {
+      setName(collectionName);
+    }
+  }, [source, collectionName, name]);
 
   // Poll training status
   useEffect(() => {
@@ -109,27 +130,43 @@ export default function TrainPanel() {
     ctx.stroke();
   }, [lossHistory]);
 
+  const canStart =
+    source === "folder"
+      ? dataDir && name && nameValid
+      : collectionName && name && nameValid;
+
   const handleStart = useCallback(async () => {
-    if (!dataDir || !name || !nameValid) return;
+    if (!canStart) return;
 
     setError(null);
     setLossHistory([]);
     setStatus(null);
 
     try {
-      const res = await startTraining({
-        data_dir: dataDir,
-        base_model: baseModel,
-        name,
-        profile,
-        chunk_seconds: chunkSeconds,
-        epochs,
-      });
+      const req =
+        source === "folder"
+          ? {
+              data_dir: dataDir,
+              base_model: baseModel,
+              name,
+              profile,
+              chunk_seconds: chunkSeconds,
+              epochs,
+            }
+          : {
+              collection: collectionName,
+              base_model: baseModel,
+              name,
+              profile,
+              chunk_seconds: chunkSeconds,
+              epochs,
+            };
+      const res = await startTraining(req);
       setTrainId(res.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start training");
     }
-  }, [dataDir, name, nameValid, baseModel, profile, chunkSeconds, epochs]);
+  }, [canStart, source, dataDir, collectionName, name, baseModel, profile, chunkSeconds, epochs]);
 
   const handleStop = useCallback(async () => {
     if (!trainId) return;
@@ -148,21 +185,74 @@ export default function TrainPanel() {
         LoRA Training
       </h3>
 
-      {/* Data directory */}
+      {/* Source selector */}
       <div className="space-y-1">
-        <label className="text-xs text-zinc-400">Data Directory</label>
-        <input
-          type="text"
-          value={dataDir}
-          onChange={(e) => setDataDir(e.target.value)}
-          placeholder="/path/to/audio/files/"
-          disabled={isTraining}
-          className="w-full rounded bg-zinc-800 px-2 py-1.5 text-sm text-zinc-200 border border-zinc-700 focus:border-sky-500 focus:outline-none placeholder:text-zinc-600 disabled:opacity-50"
-        />
-        <p className="text-[10px] text-zinc-500">
-          WAV/MP3/FLAC files + optional metadata.jsonl
-        </p>
+        <label className="text-xs text-zinc-400">Training Source</label>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            onClick={() => setSource("folder")}
+            disabled={isTraining}
+            className={`rounded border px-2 py-1.5 text-center text-xs transition-colors disabled:opacity-50 ${
+              source === "folder"
+                ? "border-sky-500 bg-sky-500/10 text-sky-400"
+                : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600"
+            }`}
+          >
+            Folder
+          </button>
+          <button
+            onClick={() => setSource("collection")}
+            disabled={isTraining}
+            className={`rounded border px-2 py-1.5 text-center text-xs transition-colors disabled:opacity-50 ${
+              source === "collection"
+                ? "border-sky-500 bg-sky-500/10 text-sky-400"
+                : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600"
+            }`}
+          >
+            Collection
+          </button>
+        </div>
       </div>
+
+      {/* Data source input */}
+      {source === "folder" ? (
+        <div className="space-y-1">
+          <label className="text-xs text-zinc-400">Data Directory</label>
+          <input
+            type="text"
+            value={dataDir}
+            onChange={(e) => setDataDir(e.target.value)}
+            placeholder="/path/to/audio/files/"
+            disabled={isTraining}
+            className="w-full rounded bg-zinc-800 px-2 py-1.5 text-sm text-zinc-200 border border-zinc-700 focus:border-sky-500 focus:outline-none placeholder:text-zinc-600 disabled:opacity-50"
+          />
+          <p className="text-[10px] text-zinc-500">
+            WAV/MP3/FLAC files + optional metadata.jsonl
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <label className="text-xs text-zinc-400">Collection</label>
+          <select
+            value={collectionName}
+            onChange={(e) => setCollectionName(e.target.value)}
+            disabled={isTraining}
+            className="w-full rounded bg-zinc-800 px-2 py-1.5 text-sm text-zinc-200 border border-zinc-700 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+          >
+            <option value="">Select a collection...</option>
+            {collections.map((c) => (
+              <option key={c.name} value={c.name}>
+                {c.name} ({c.track_count} tracks)
+              </option>
+            ))}
+          </select>
+          {collections.length === 0 && (
+            <p className="text-[10px] text-zinc-500">
+              No collections yet. Use the Library tab to create one.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Name */}
       <div className="space-y-1">
@@ -299,7 +389,7 @@ export default function TrainPanel() {
         ) : (
           <button
             onClick={handleStart}
-            disabled={!dataDir || !name || !nameValid}
+            disabled={!canStart}
             className="w-full rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Start Training

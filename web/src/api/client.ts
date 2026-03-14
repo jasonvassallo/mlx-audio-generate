@@ -1,18 +1,25 @@
 import type {
+  CollectionFull,
+  CollectionSummary,
   EnhanceResponse,
   GenerateRequest,
   GenerateResponse,
   JobInfo,
+  LibrarySearchParams,
+  LibrarySource,
   LLMModelInfo,
   LLMStatus,
   LoRAInfo,
   ModelInfo,
+  PlaylistAnalysis,
+  PlaylistInfo,
   PresetInfo,
   PromptAnalysis,
   PromptMemoryData,
   ServerSettings,
   StemResult,
   TagDatabase,
+  TrackSearchResult,
   TrainRequest,
   TrainStatus,
 } from "../types/api";
@@ -266,4 +273,198 @@ export function stopTraining(id: string): Promise<{ stopped: string }> {
   return request<{ stopped: string }>(`/train/stop/${id}`, {
     method: "POST",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9g-2: Library Scanner
+// ---------------------------------------------------------------------------
+
+/** List configured library sources. */
+export function fetchLibrarySources(): Promise<LibrarySource[]> {
+  return request<LibrarySource[]>("/library/sources");
+}
+
+/** Add a new library source. */
+export function addLibrarySource(
+  type: "apple_music" | "rekordbox",
+  path: string,
+  label: string,
+): Promise<LibrarySource> {
+  return request<LibrarySource>("/library/sources", {
+    method: "POST",
+    body: JSON.stringify({ type, path, label }),
+  });
+}
+
+/** Update a library source. */
+export function updateLibrarySource(
+  id: string,
+  updates: { path?: string; label?: string },
+): Promise<LibrarySource> {
+  return request<LibrarySource>(`/library/sources/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(updates),
+  });
+}
+
+/** Delete a library source. */
+export function deleteLibrarySource(
+  id: string,
+): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(
+    `/library/sources/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** Parse/refresh a library source XML. */
+export function scanLibrarySource(id: string): Promise<LibrarySource> {
+  return request<LibrarySource>(
+    `/library/scan/${encodeURIComponent(id)}`,
+    { method: "POST" },
+  );
+}
+
+/** List playlists for a library source. */
+export function fetchPlaylists(sourceId: string): Promise<PlaylistInfo[]> {
+  return request<PlaylistInfo[]>(
+    `/library/playlists/${encodeURIComponent(sourceId)}`,
+  );
+}
+
+/** Search/filter/sort/paginate tracks from a library source. */
+export function searchLibraryTracks(
+  sourceId: string,
+  params: LibrarySearchParams = {},
+): Promise<TrackSearchResult> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      qs.set(key, String(value));
+    }
+  }
+  const query = qs.toString();
+  return request<TrackSearchResult>(
+    `/library/tracks/${encodeURIComponent(sourceId)}${query ? `?${query}` : ""}`,
+  );
+}
+
+/** Get tracks in a specific playlist. */
+export function fetchPlaylistTracks(
+  sourceId: string,
+  playlistId: string,
+): Promise<{ tracks: import("../types/api").LibraryTrackInfo[]; count: number }> {
+  return request(
+    `/library/playlist-tracks/${encodeURIComponent(sourceId)}/${encodeURIComponent(playlistId)}`,
+  );
+}
+
+/** Generate text descriptions for selected tracks. */
+export function describeLibraryTracks(
+  sourceId: string,
+  trackIds: string[],
+  mode: "template" | "llm" = "template",
+): Promise<{ descriptions: Record<string, string>; mode: string }> {
+  return request("/library/describe", {
+    method: "POST",
+    body: JSON.stringify({ source_id: sourceId, track_ids: trackIds, mode }),
+  });
+}
+
+/** Suggest a LoRA adapter name from track metadata. */
+export function suggestAdapterName(
+  sourceId: string,
+  trackIds: string[],
+): Promise<{ name: string; analysis: Record<string, unknown> }> {
+  return request("/library/suggest-name", {
+    method: "POST",
+    body: JSON.stringify({ source_id: sourceId, track_ids: trackIds }),
+  });
+}
+
+/** Analyze tracks and generate a prompt capturing their vibe. */
+export function generatePlaylistPrompt(
+  sourceId: string,
+  trackIds: string[],
+): Promise<PlaylistAnalysis> {
+  return request<PlaylistAnalysis>("/library/generate-prompt", {
+    method: "POST",
+    body: JSON.stringify({ source_id: sourceId, track_ids: trackIds }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Collections
+// ---------------------------------------------------------------------------
+
+/** List all saved collections. */
+export function fetchCollections(): Promise<CollectionSummary[]> {
+  return request<CollectionSummary[]>("/collections");
+}
+
+/** Get a collection by name. */
+export function getCollection(name: string): Promise<CollectionFull> {
+  return request<CollectionFull>(
+    `/collections/${encodeURIComponent(name)}`,
+  );
+}
+
+/** Create a new collection. */
+export function createCollection(data: {
+  name: string;
+  source?: string;
+  playlist?: string;
+  tracks?: Record<string, unknown>[];
+}): Promise<CollectionFull> {
+  return request<CollectionFull>("/collections", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Update a collection. */
+export function updateCollection(
+  name: string,
+  updates: {
+    tracks?: Record<string, unknown>[];
+    source?: string;
+    playlist?: string;
+  },
+): Promise<CollectionFull> {
+  return request<CollectionFull>(
+    `/collections/${encodeURIComponent(name)}`,
+    { method: "PUT", body: JSON.stringify(updates) },
+  );
+}
+
+/** Delete a collection. */
+export function deleteCollection(
+  name: string,
+): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(
+    `/collections/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** Export a collection as JSON download URL. */
+export function getCollectionExportUrl(name: string): string {
+  return `${_base}/collections/${encodeURIComponent(name)}/export`;
+}
+
+/** Import a collection from a JSON file. */
+export async function importCollection(
+  file: File,
+): Promise<CollectionFull> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${_base}/collections/import`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+  return res.json();
 }

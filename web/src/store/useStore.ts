@@ -1,12 +1,18 @@
 import { create } from "zustand";
 import type {
+  CollectionSummary,
   EnhanceResponse,
   GenerateRequest,
   JobInfo,
+  LibrarySearchParams,
+  LibrarySource,
+  LibraryTrackInfo,
   LLMModelInfo,
   LLMStatus,
   LoRAInfo,
   ModelInfo,
+  PlaylistAnalysis,
+  PlaylistInfo,
   PresetInfo,
   PromptAnalysis,
   PromptMemoryData,
@@ -36,6 +42,15 @@ import {
   getServerUrl,
   setServerUrl as apiSetServerUrl,
   fetchLoras as apiFetchLoras,
+  fetchLibrarySources as apiFetchLibrarySources,
+  addLibrarySource as apiAddLibrarySource,
+  deleteLibrarySource as apiDeleteLibrarySource,
+  scanLibrarySource as apiScanLibrarySource,
+  fetchPlaylists as apiFetchPlaylists,
+  searchLibraryTracks as apiSearchLibraryTracks,
+  fetchPlaylistTracks as apiFetchPlaylistTracks,
+  generatePlaylistPrompt as apiGeneratePlaylistPrompt,
+  fetchCollections as apiFetchCollections,
 } from "../api/client";
 import {
   saveEntry,
@@ -97,8 +112,8 @@ interface AppState {
   updateSettings: (settings: Partial<HistorySettings>) => Promise<void>;
 
   // --- Active Tab ---
-  activeTab: "generate" | "suggest" | "train" | "settings";
-  setActiveTab: (tab: "generate" | "suggest" | "train" | "settings") => void;
+  activeTab: "generate" | "suggest" | "train" | "library" | "settings";
+  setActiveTab: (tab: "generate" | "suggest" | "train" | "library" | "settings") => void;
 
   // --- Enhance Flow ---
   enhanceResult: EnhanceResponse | null;
@@ -167,6 +182,40 @@ interface AppState {
   selectedLora: string | null;
   fetchLoras: () => Promise<void>;
   setSelectedLora: (name: string | null) => void;
+
+  // --- Library (Phase 9g-2) ---
+  librarySources: LibrarySource[];
+  librarySourcesLoading: boolean;
+  activeSourceId: string | null;
+  playlists: PlaylistInfo[];
+  playlistsLoading: boolean;
+  activePlaylistId: string | null;
+  libraryTracks: LibraryTrackInfo[];
+  libraryTracksLoading: boolean;
+  libraryTracksTotal: number;
+  selectedTrackIds: Set<string>;
+  librarySearchParams: LibrarySearchParams;
+  generateLikeResult: PlaylistAnalysis | null;
+  generateLikeLoading: boolean;
+  loadLibrarySources: () => Promise<void>;
+  addSource: (type: "apple_music" | "rekordbox", path: string, label: string) => Promise<void>;
+  removeSource: (id: string) => Promise<void>;
+  scanSource: (id: string) => Promise<void>;
+  loadPlaylists: (sourceId: string) => Promise<void>;
+  loadTracks: (sourceId: string, params?: LibrarySearchParams) => Promise<void>;
+  loadPlaylistTracks: (sourceId: string, playlistId: string) => Promise<void>;
+  setActiveSourceId: (id: string | null) => void;
+  setActivePlaylistId: (id: string | null) => void;
+  toggleTrackSelection: (trackId: string) => void;
+  selectAllTracks: () => void;
+  deselectAllTracks: () => void;
+  setLibrarySearchParams: (params: LibrarySearchParams) => void;
+  generateLikeThis: (sourceId: string, trackIds: string[]) => Promise<void>;
+  clearGenerateLikeResult: () => void;
+  // Collections
+  collections: CollectionSummary[];
+  collectionsLoading: boolean;
+  loadCollections: () => Promise<void>;
 }
 
 const DEFAULT_PARAMS: GenerateRequest = {
@@ -558,7 +607,7 @@ export const useStore = create<AppState>((set, get) => ({
           ...loaded,
           model: validModel ? loaded.model : s.params.model,
         },
-        activeTab: "generate",
+        activeTab: "generate" as const,
       }));
     } catch (e) {
       console.error("Failed to apply preset:", e);
@@ -659,7 +708,7 @@ export const useStore = create<AppState>((set, get) => ({
           set((s) => ({ history: [entry, ...s.history] }));
         }
       } catch (e) {
-        console.error(`Queue item ${i + 1} failed:`, e);
+        console.error("Queue item failed:", i + 1, e);
       }
     }
 
@@ -678,4 +727,187 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
   setSelectedLora: (name) => set({ selectedLora: name }),
+
+  // --- Library (Phase 9g-2) ---
+  librarySources: [],
+  librarySourcesLoading: false,
+  activeSourceId: null,
+  playlists: [],
+  playlistsLoading: false,
+  activePlaylistId: null,
+  libraryTracks: [],
+  libraryTracksLoading: false,
+  libraryTracksTotal: 0,
+  selectedTrackIds: new Set<string>(),
+  librarySearchParams: {},
+  generateLikeResult: null,
+  generateLikeLoading: false,
+
+  loadLibrarySources: async () => {
+    set({ librarySourcesLoading: true });
+    try {
+      const sources = await apiFetchLibrarySources();
+      set({ librarySources: sources, librarySourcesLoading: false });
+    } catch (e) {
+      console.error("Failed to load library sources:", e);
+      set({ librarySourcesLoading: false });
+    }
+  },
+
+  addSource: async (type, path, label) => {
+    try {
+      await apiAddLibrarySource(type, path, label);
+      await get().loadLibrarySources();
+    } catch (e) {
+      console.error("Failed to add library source:", e);
+      throw e;
+    }
+  },
+
+  removeSource: async (id) => {
+    try {
+      await apiDeleteLibrarySource(id);
+      const { activeSourceId } = get();
+      if (activeSourceId === id) {
+        set({ activeSourceId: null, playlists: [], libraryTracks: [], libraryTracksTotal: 0 });
+      }
+      await get().loadLibrarySources();
+    } catch (e) {
+      console.error("Failed to remove library source:", e);
+    }
+  },
+
+  scanSource: async (id) => {
+    try {
+      await apiScanLibrarySource(id);
+      await get().loadLibrarySources();
+      // Refresh playlists if this is the active source
+      if (get().activeSourceId === id) {
+        await get().loadPlaylists(id);
+      }
+    } catch (e) {
+      console.error("Failed to scan library source:", e);
+      throw e;
+    }
+  },
+
+  loadPlaylists: async (sourceId) => {
+    set({ playlistsLoading: true });
+    try {
+      const playlists = await apiFetchPlaylists(sourceId);
+      set({ playlists, playlistsLoading: false });
+    } catch (e) {
+      console.error("Failed to load playlists:", e);
+      set({ playlistsLoading: false });
+    }
+  },
+
+  loadTracks: async (sourceId, params = {}) => {
+    set({ libraryTracksLoading: true });
+    try {
+      const result = await apiSearchLibraryTracks(sourceId, params);
+      set({
+        libraryTracks: result.tracks,
+        libraryTracksTotal: result.count,
+        libraryTracksLoading: false,
+        librarySearchParams: params,
+      });
+    } catch (e) {
+      console.error("Failed to load tracks:", e);
+      set({ libraryTracksLoading: false });
+    }
+  },
+
+  loadPlaylistTracks: async (sourceId, playlistId) => {
+    set({ libraryTracksLoading: true });
+    try {
+      const result = await apiFetchPlaylistTracks(sourceId, playlistId);
+      set({
+        libraryTracks: result.tracks,
+        libraryTracksTotal: result.count,
+        libraryTracksLoading: false,
+      });
+    } catch (e) {
+      console.error("Failed to load playlist tracks:", e);
+      set({ libraryTracksLoading: false });
+    }
+  },
+
+  setActiveSourceId: (id) => {
+    set({
+      activeSourceId: id,
+      activePlaylistId: null,
+      playlists: [],
+      libraryTracks: [],
+      libraryTracksTotal: 0,
+      selectedTrackIds: new Set(),
+    });
+    if (id) {
+      get().loadPlaylists(id);
+      get().loadTracks(id);
+    }
+  },
+
+  setActivePlaylistId: (id) => {
+    set({ activePlaylistId: id, selectedTrackIds: new Set() });
+    const sourceId = get().activeSourceId;
+    if (!sourceId) return;
+    if (id) {
+      get().loadPlaylistTracks(sourceId, id);
+    } else {
+      get().loadTracks(sourceId, get().librarySearchParams);
+    }
+  },
+
+  toggleTrackSelection: (trackId) => {
+    set((s) => {
+      const next = new Set(s.selectedTrackIds);
+      if (next.has(trackId)) next.delete(trackId);
+      else next.add(trackId);
+      return { selectedTrackIds: next };
+    });
+  },
+
+  selectAllTracks: () => {
+    set((s) => ({
+      selectedTrackIds: new Set(s.libraryTracks.map((t) => t.track_id)),
+    }));
+  },
+
+  deselectAllTracks: () => set({ selectedTrackIds: new Set() }),
+
+  setLibrarySearchParams: (params) => {
+    set({ librarySearchParams: params });
+    const sourceId = get().activeSourceId;
+    if (sourceId && !get().activePlaylistId) {
+      get().loadTracks(sourceId, params);
+    }
+  },
+
+  generateLikeThis: async (sourceId, trackIds) => {
+    set({ generateLikeLoading: true });
+    try {
+      const result = await apiGeneratePlaylistPrompt(sourceId, trackIds);
+      set({ generateLikeResult: result, generateLikeLoading: false });
+    } catch (e) {
+      console.error("Failed to generate prompt:", e);
+      set({ generateLikeLoading: false });
+    }
+  },
+
+  clearGenerateLikeResult: () => set({ generateLikeResult: null }),
+
+  // Collections
+  collections: [],
+  collectionsLoading: false,
+  loadCollections: async () => {
+    set({ collectionsLoading: true });
+    try {
+      const collections = await apiFetchCollections();
+      set({ collections, collectionsLoading: false });
+    } catch (e) {
+      console.error("Failed to load collections:", e);
+      set({ collectionsLoading: false });
+    }
+  },
 }));

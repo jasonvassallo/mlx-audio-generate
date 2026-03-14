@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useStore } from "./store/useStore";
 import { useServerHeartbeat } from "./hooks/useServerHeartbeat";
 import Header from "./components/Header";
@@ -16,11 +16,14 @@ import TabBar from "./components/TabBar";
 import SuggestPanel from "./components/SuggestPanel";
 import QueuePanel from "./components/QueuePanel";
 import TrainPanel from "./components/TrainPanel";
+import { LibrarySidebar, LibraryTrackTable } from "./components/LibraryPanel";
+import MetadataEditor from "./components/MetadataEditor";
 
 const TABS = [
   { id: "generate", label: "Generate" },
   { id: "suggest", label: "Suggest" },
   { id: "train", label: "Train" },
+  { id: "library", label: "Library" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -35,6 +38,12 @@ export default function App() {
   const setActiveTab = useStore((s) => s.setActiveTab);
   const serverUrl = useStore((s) => s.serverUrl);
   const connected = useServerHeartbeat();
+
+  // MetadataEditor modal state
+  const selectedTrackIds = useStore((s) => s.selectedTrackIds);
+  const libraryTracks = useStore((s) => s.libraryTracks);
+  const activeSourceId = useStore((s) => s.activeSourceId);
+  const [showMetadataEditor, setShowMetadataEditor] = useState(false);
 
   useEffect(() => {
     loadModels();
@@ -52,7 +61,7 @@ export default function App() {
         target.tagName === "TEXTAREA" ||
         target.isContentEditable;
 
-      // Tab switching: 1/2/3 (only when not typing in input)
+      // Tab switching: 1/2/3/4/5 (only when not typing in input)
       if (!isInput && !e.metaKey && !e.ctrlKey) {
         if (e.key === "1") {
           e.preventDefault();
@@ -71,13 +80,23 @@ export default function App() {
         }
         if (e.key === "4") {
           e.preventDefault();
+          setActiveTab("library");
+          return;
+        }
+        if (e.key === "5") {
+          e.preventDefault();
           setActiveTab("settings");
           return;
         }
       }
 
-      // Escape: dismiss enhance preview
+      // Escape: dismiss enhance preview or metadata editor
       if (e.key === "Escape") {
+        if (showMetadataEditor) {
+          e.preventDefault();
+          setShowMetadataEditor(false);
+          return;
+        }
         const { enhanceResult, clearEnhanceResult } = useStore.getState();
         if (enhanceResult) {
           e.preventDefault();
@@ -98,13 +117,25 @@ export default function App() {
         }
       }
     },
-    [setActiveTab],
+    [setActiveTab, showMetadataEditor],
   );
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
+
+  // "Train on These" opens the MetadataEditor with selected tracks
+  const handleTrainOnThese = useCallback(() => {
+    if (selectedTrackIds.size > 0 && activeSourceId) {
+      setShowMetadataEditor(true);
+    }
+  }, [selectedTrackIds, activeSourceId]);
+
+  // Selected tracks for MetadataEditor
+  const selectedTracks = libraryTracks.filter((t) =>
+    selectedTrackIds.has(t.track_id),
+  );
 
   return (
     <div className="flex h-screen flex-col bg-surface-0">
@@ -140,7 +171,7 @@ export default function App() {
             active={activeTab}
             tabs={TABS}
             onChange={(id) =>
-              setActiveTab(id as "generate" | "suggest" | "train" | "settings")
+              setActiveTab(id as typeof activeTab)
             }
           />
 
@@ -183,6 +214,8 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === "library" && <LibrarySidebar />}
+
           {activeTab === "settings" && (
             <div className="flex-1 space-y-5 overflow-y-auto p-5">
               <ServerPanel />
@@ -196,14 +229,29 @@ export default function App() {
           )}
         </div>
 
-        {/* Right panel: History / Output */}
-        <div className="flex flex-1 flex-col overflow-y-auto p-5">
-          <HistoryPanel />
+        {/* Right panel: History or Library Track Table */}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {activeTab === "library" ? (
+            <LibraryTrackTable onTrainOnThese={handleTrainOnThese} />
+          ) : (
+            <div className="flex-1 overflow-y-auto p-5">
+              <HistoryPanel />
+            </div>
+          )}
         </div>
       </main>
 
       {/* Transport bar: global playback controls */}
       <TransportBar connected={connected} />
+
+      {/* MetadataEditor modal */}
+      {showMetadataEditor && activeSourceId && selectedTracks.length > 0 && (
+        <MetadataEditor
+          tracks={selectedTracks}
+          sourceId={activeSourceId}
+          onClose={() => setShowMetadataEditor(false)}
+        />
+      )}
     </div>
   );
 }

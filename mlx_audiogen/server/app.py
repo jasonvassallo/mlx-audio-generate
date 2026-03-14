@@ -740,11 +740,15 @@ class TrainRequest(BaseModel):
     """Request body for POST /api/train."""
 
     data_dir: Optional[str] = Field(
-        default=None, min_length=1, max_length=1024,
+        default=None,
+        min_length=1,
+        max_length=1024,
         description="Path to training data (required unless collection is provided)",
     )
     collection: Optional[str] = Field(
-        default=None, min_length=1, max_length=64,
+        default=None,
+        min_length=1,
+        max_length=64,
         pattern=r"^[a-zA-Z0-9_-]+$",
         description="Collection name to use as training data source",
     )
@@ -873,9 +877,7 @@ def start_training(req: TrainRequest) -> dict:
             if ".." in data_dir.parts:
                 raise HTTPException(400, "data_dir must not contain '..'")
             if not data_dir.is_dir():
-                raise HTTPException(
-                    400, f"Data directory not found: {req.data_dir}"
-                )
+                raise HTTPException(400, f"Data directory not found: {req.data_dir}")
             entries = scan_dataset(data_dir)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(400, str(e))
@@ -977,9 +979,7 @@ class AddSourceRequest(BaseModel):
     path: str = Field(
         ..., min_length=1, max_length=2048, description="Path to XML export file"
     )
-    label: str = Field(
-        ..., min_length=1, max_length=128, description="Display name"
-    )
+    label: str = Field(..., min_length=1, max_length=128, description="Display name")
 
 
 class UpdateSourceRequest(BaseModel):

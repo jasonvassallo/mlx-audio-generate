@@ -299,8 +299,17 @@ def test_tags_endpoint(client):
         assert isinstance(data[cat], list)
         assert len(data[cat]) > 0
     # 9 new categories start as empty lists
-    for cat in ("sub_genre", "vocal", "key", "bpm", "artist", "label",
-                "structure", "rating", "availability"):
+    for cat in (
+        "sub_genre",
+        "vocal",
+        "key",
+        "bpm",
+        "artist",
+        "label",
+        "structure",
+        "rating",
+        "availability",
+    ):
         assert cat in data
         assert isinstance(data[cat], list)
 
