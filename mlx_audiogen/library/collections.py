@@ -46,6 +46,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _resolve_dir(collections_dir: Optional[Path]) -> Path:
+    """Return *collections_dir* or the module-level default (lazy evaluation)."""
+    return collections_dir if collections_dir is not None else DEFAULT_COLLECTIONS_DIR
+
+
 def _collection_path(name: str, collections_dir: Path) -> Path:
     return collections_dir / f"{name}.json"
 
@@ -57,7 +62,7 @@ def _collection_path(name: str, collections_dir: Path) -> Path:
 
 def create_collection(
     data: dict,
-    collections_dir: Path = DEFAULT_COLLECTIONS_DIR,
+    collections_dir: Optional[Path] = None,
 ) -> dict:
     """Create a new collection and persist it to disk.
 
@@ -74,6 +79,7 @@ def create_collection(
     Raises:
         ValueError: If the name is invalid or the collection already exists.
     """
+    collections_dir = _resolve_dir(collections_dir)
     name = data.get("name", "")
     _validate_name(name)
 
@@ -92,7 +98,7 @@ def create_collection(
 
 
 def list_collections(
-    collections_dir: Path = DEFAULT_COLLECTIONS_DIR,
+    collections_dir: Optional[Path] = None,
 ) -> list[dict]:
     """Return summary info for every collection in *collections_dir*.
 
@@ -103,6 +109,7 @@ def list_collections(
 
     Returns an empty list if the directory does not exist.
     """
+    collections_dir = _resolve_dir(collections_dir)
     if not collections_dir.is_dir():
         return []
 
@@ -128,7 +135,7 @@ def list_collections(
 
 def get_collection(
     name: str,
-    collections_dir: Path = DEFAULT_COLLECTIONS_DIR,
+    collections_dir: Optional[Path] = None,
 ) -> dict:
     """Load a collection by name.
 
@@ -136,6 +143,7 @@ def get_collection(
         ValueError: If the name is invalid.
         FileNotFoundError: If no collection with that name exists.
     """
+    collections_dir = _resolve_dir(collections_dir)
     _validate_name(name)
     path = _collection_path(name, collections_dir)
     if not path.exists():
@@ -146,7 +154,7 @@ def get_collection(
 def update_collection(
     name: str,
     updates: dict,
-    collections_dir: Path = DEFAULT_COLLECTIONS_DIR,
+    collections_dir: Optional[Path] = None,
 ) -> dict:
     """Merge *updates* into an existing collection and persist.
 
@@ -157,6 +165,7 @@ def update_collection(
         ValueError: If the name is invalid.
         FileNotFoundError: If no collection with that name exists.
     """
+    collections_dir = _resolve_dir(collections_dir)
     doc = get_collection(name, collections_dir)
 
     for key, value in updates.items():
@@ -171,7 +180,7 @@ def update_collection(
 
 def delete_collection(
     name: str,
-    collections_dir: Path = DEFAULT_COLLECTIONS_DIR,
+    collections_dir: Optional[Path] = None,
 ) -> None:
     """Delete a collection file.
 
@@ -179,6 +188,7 @@ def delete_collection(
         ValueError: If the name is invalid.
         FileNotFoundError: If no collection with that name exists.
     """
+    collections_dir = _resolve_dir(collections_dir)
     _validate_name(name)
     path = _collection_path(name, collections_dir)
     if not path.exists():
@@ -193,7 +203,7 @@ def delete_collection(
 
 def collection_to_training_data(
     name: str,
-    collections_dir: Path = DEFAULT_COLLECTIONS_DIR,
+    collections_dir: Optional[Path] = None,
 ) -> list[dict[str, str]]:
     """Convert a collection to training data entries for the LoRA pipeline.
 
@@ -215,6 +225,7 @@ def collection_to_training_data(
         ValueError: If no tracks with available audio exist in the collection.
         FileNotFoundError: If the collection does not exist.
     """
+    collections_dir = _resolve_dir(collections_dir)
     doc = get_collection(name, collections_dir)
     raw_tracks: list[dict] = doc.get("tracks", [])
 

@@ -1274,7 +1274,7 @@ class DescribeRequest(BaseModel):
     """Request body for POST /api/library/describe."""
 
     source_id: str = Field(..., min_length=1, max_length=64)
-    track_ids: list[str] = Field(..., min_items=1, max_length=500)
+    track_ids: list[str] = Field(..., min_length=1, max_length=500)
     mode: str = Field(default="template", pattern=r"^(template|llm)$")
 
 
@@ -1282,14 +1282,14 @@ class SuggestNameRequest(BaseModel):
     """Request body for POST /api/library/suggest-name."""
 
     source_id: str = Field(..., min_length=1, max_length=64)
-    track_ids: list[str] = Field(..., min_items=1, max_length=500)
+    track_ids: list[str] = Field(..., min_length=1, max_length=500)
 
 
 class GeneratePromptRequest(BaseModel):
     """Request body for POST /api/library/generate-prompt."""
 
     source_id: str = Field(..., min_length=1, max_length=64)
-    track_ids: list[str] = Field(..., min_items=1, max_length=500)
+    track_ids: list[str] = Field(..., min_length=1, max_length=500)
 
 
 @app.post("/api/library/describe")
