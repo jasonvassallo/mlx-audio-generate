@@ -218,3 +218,73 @@ class TestApiRateLimiter:
             assert mb_elapsed >= 0.7
 
         asyncio.run(_run())
+
+
+# ===========================================================================
+# MusicBrainz parser tests (2 tests)
+# ===========================================================================
+
+
+class TestMusicBrainz:
+    def test_parse_response(self):
+        from mlx_audiogen.library.enrichment.musicbrainz import _parse_musicbrainz_response
+
+        fake = {"recordings": [{"id": "rec-123", "title": "Strobe",
+            "artist-credit": [{"artist": {"id": "art-456", "name": "deadmau5"}}],
+            "releases": [{"id": "rel-789", "release-group": {"id": "rg-101"}}],
+            "tags": [{"name": "progressive house", "count": 5}]}]}
+        result = _parse_musicbrainz_response(fake)
+        assert result is not None
+        assert result["artist_mbid"] == "art-456"
+        assert "progressive house" in [t["name"] for t in result["tags"]]
+
+    def test_parse_empty(self):
+        from mlx_audiogen.library.enrichment.musicbrainz import _parse_musicbrainz_response
+
+        assert _parse_musicbrainz_response({"recordings": []}) is None
+
+
+# ===========================================================================
+# Last.fm parser tests (2 tests)
+# ===========================================================================
+
+
+class TestLastFm:
+    def test_parse_track_response(self):
+        from mlx_audiogen.library.enrichment.lastfm import _parse_lastfm_track_response
+
+        fake = {"track": {"name": "Strobe", "listeners": "500000", "playcount": "3000000",
+            "toptags": {"tag": [{"name": "progressive house", "count": "100"}]},
+            "similar": {"track": [{"name": "Ghosts", "artist": {"name": "deadmau5"}, "match": "0.9"}]}}}
+        result = _parse_lastfm_track_response(fake)
+        assert result is not None
+        assert result["listeners"] == 500000
+        assert len(result["tags"]) == 1
+
+    def test_parse_error(self):
+        from mlx_audiogen.library.enrichment.lastfm import _parse_lastfm_track_response
+
+        assert _parse_lastfm_track_response({"error": 6}) is None
+
+
+# ===========================================================================
+# Discogs parser tests (2 tests)
+# ===========================================================================
+
+
+class TestDiscogs:
+    def test_parse_search_response(self):
+        from mlx_audiogen.library.enrichment.discogs import _parse_discogs_search_response
+
+        fake = {"results": [{"id": 12345, "type": "master", "title": "CamelPhat - Cola",
+            "genre": ["Electronic"], "style": ["Tech House"], "label": ["Defected"],
+            "catno": "DFTD123", "year": "2017", "country": "UK"}]}
+        result = _parse_discogs_search_response(fake)
+        assert result is not None
+        assert result["genres"] == ["Electronic"]
+        assert result["year"] == 2017
+
+    def test_parse_empty(self):
+        from mlx_audiogen.library.enrichment.discogs import _parse_discogs_search_response
+
+        assert _parse_discogs_search_response({"results": []}) is None
