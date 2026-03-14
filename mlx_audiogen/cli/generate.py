@@ -141,6 +141,18 @@ def main():
         default=None,
         help="Path to converted weights directory",
     )
+    parser.add_argument(
+        "--lora",
+        type=str,
+        default=None,
+        help="LoRA adapter name (from ~/.mlx-audiogen/loras/)",
+    )
+    parser.add_argument(
+        "--lora-path",
+        type=str,
+        default=None,
+        help="Explicit path to LoRA adapter directory",
+    )
 
     args = parser.parse_args()
 
@@ -249,6 +261,49 @@ def main():
         from mlx_audiogen.models.musicgen import MusicGenPipeline
 
         pipe = MusicGenPipeline.from_pretrained(weights_dir)
+
+        # Load LoRA if specified
+        if args.lora or args.lora_path:
+            from mlx_audiogen.lora.config import DEFAULT_LORAS_DIR
+            from mlx_audiogen.lora.inject import apply_lora
+            from mlx_audiogen.lora.trainer import load_lora_config
+            from mlx_audiogen.shared.hub import load_safetensors
+
+            if args.lora_path:
+                lora_dir = Path(args.lora_path)
+            else:
+                lora_dir = DEFAULT_LORAS_DIR / args.lora
+
+            if not lora_dir.is_dir():
+                print(f"Error: LoRA directory not found: {lora_dir}")
+                sys.exit(1)
+
+            lora_config = load_lora_config(lora_dir)
+
+            # Validate compatibility
+            model_hidden = pipe.config.decoder.hidden_size
+            if lora_config.hidden_size != model_hidden:
+                print(
+                    f"Error: LoRA hidden_size "
+                    f"({lora_config.hidden_size}) doesn't match "
+                    f"model ({model_hidden})."
+                )
+                sys.exit(1)
+
+            print(f"Loading LoRA: {lora_config.name} (rank={lora_config.rank})")
+            apply_lora(
+                pipe.model,
+                targets=lora_config.targets,
+                rank=lora_config.rank,
+                alpha=lora_config.alpha,
+            )
+            lora_weights = load_safetensors(lora_dir / "lora.safetensors")
+            pipe.model.load_weights(
+                [(k, mx.array(v)) for k, v in lora_weights.items()],
+                strict=False,
+            )
+            print(f"LoRA loaded: {lora_config.name}")
+
         audio = pipe.generate(
             prompt=args.prompt,
             seconds=args.seconds,

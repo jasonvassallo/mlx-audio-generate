@@ -182,6 +182,10 @@ class GenerateRequest(BaseModel):
     # Audio-to-audio: reference audio path + strength (Phase 9f)
     reference_audio_path: Optional[str] = Field(default=None, max_length=1024)
     reference_strength: float = Field(default=0.7, ge=0.0, le=1.0)
+    # LoRA adapter name or path (Phase 9g)
+    lora: Optional[str] = Field(
+        default=None, max_length=200, description="LoRA adapter name or path"
+    )
 
 
 class JobInfo(BaseModel):
@@ -721,6 +725,216 @@ def update_settings(req: SettingsData) -> dict:
     return dict(_server_settings)
 
 
+# ---------------------------------------------------------------------------
+# LoRA Endpoints (Phase 9g)
+# ---------------------------------------------------------------------------
+
+# Track which LoRA is currently applied to each pipeline (by model name)
+_active_loras: dict[str, str | None] = {}
+# Training state
+_active_trainer: dict[str, object] = {}  # job_id -> LoRATrainer
+_training_lock = Lock()
+
+
+class TrainRequest(BaseModel):
+    """Request body for POST /api/train."""
+
+    data_dir: str = Field(
+        ..., min_length=1, max_length=1024, description="Path to training data"
+    )
+    base_model: str = Field(
+        ..., min_length=1, max_length=200, description="Base model name"
+    )
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="LoRA adapter name",
+    )
+    profile: str = Field(default="balanced", pattern=r"^(quick|balanced|deep)$")
+    rank: Optional[int] = Field(default=None, ge=1, le=256)
+    alpha: Optional[float] = Field(default=None, gt=0)
+    targets: Optional[list[str]] = Field(default=None)
+    epochs: int = Field(default=10, ge=1, le=100)
+    learning_rate: float = Field(default=1e-4, gt=0, le=1.0)
+    batch_size: int = Field(default=1, ge=1, le=8)
+    chunk_seconds: float = Field(default=10.0, ge=5.0, le=40.0)
+    early_stop: bool = Field(default=True)
+    patience: int = Field(default=3, ge=1, le=20)
+
+
+@app.get("/api/loras")
+def list_loras() -> list[dict]:
+    """List available LoRA adapters."""
+    from mlx_audiogen.lora.trainer import list_available_loras
+
+    return list_available_loras()
+
+
+@app.get("/api/loras/{name}")
+def get_lora(name: str) -> dict:
+    """Get config for a specific LoRA adapter."""
+    from mlx_audiogen.lora.config import DEFAULT_LORAS_DIR
+    from mlx_audiogen.lora.trainer import load_lora_config
+
+    lora_dir = DEFAULT_LORAS_DIR / name
+    if not lora_dir.is_dir():
+        raise HTTPException(404, f"LoRA not found: {name}")
+    try:
+        cfg = load_lora_config(lora_dir)
+        return cfg.to_dict()
+    except FileNotFoundError:
+        raise HTTPException(404, f"LoRA config not found: {name}")
+
+
+@app.delete("/api/loras/{name}")
+def delete_lora(name: str) -> dict:
+    """Delete a LoRA adapter."""
+    import shutil
+
+    from mlx_audiogen.lora.config import DEFAULT_LORAS_DIR
+
+    # Validate name (prevent path traversal)
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, "Invalid LoRA name")
+
+    lora_dir = DEFAULT_LORAS_DIR / name
+    if not lora_dir.is_dir():
+        raise HTTPException(404, f"LoRA not found: {name}")
+
+    shutil.rmtree(lora_dir)
+    return {"deleted": name}
+
+
+@app.post("/api/train")
+def start_training(req: TrainRequest) -> dict:
+    """Start LoRA training in a background thread."""
+    with _training_lock:
+        if _active_trainer:
+            raise HTTPException(409, "Training already in progress")
+
+    import mlx.core as mx
+
+    from mlx_audiogen.lora.config import PROFILES, LoRAConfig
+    from mlx_audiogen.lora.dataset import (
+        apply_delay_pattern,
+        chunk_audio,
+        load_and_prepare_audio,
+        scan_dataset,
+    )
+    from mlx_audiogen.lora.trainer import LoRATrainer
+    from mlx_audiogen.models.musicgen import MusicGenPipeline
+
+    # Validate data_dir
+    data_dir = Path(req.data_dir)
+    if ".." in data_dir.parts:
+        raise HTTPException(400, "data_dir must not contain '..'")
+    if not data_dir.is_dir():
+        raise HTTPException(400, f"Data directory not found: {req.data_dir}")
+
+    # Load pipeline
+    pipe: MusicGenPipeline = _get_pipeline("musicgen")  # type: ignore[assignment]
+    hidden_size = pipe.config.decoder.hidden_size
+
+    # Build config from profile + overrides
+    profile = PROFILES[req.profile]
+    rank = req.rank if req.rank is not None else profile.rank
+    alpha = req.alpha if req.alpha is not None else profile.alpha
+    targets = req.targets if req.targets else profile.targets
+
+    config = LoRAConfig(
+        name=req.name,
+        base_model=req.base_model,
+        hidden_size=hidden_size,
+        rank=rank,
+        alpha=alpha,
+        targets=targets,
+        profile=req.profile,
+        chunk_seconds=req.chunk_seconds,
+        epochs=req.epochs,
+        learning_rate=req.learning_rate,
+        batch_size=req.batch_size,
+        early_stop=req.early_stop,
+        patience=req.patience,
+    )
+
+    # Scan and prepare data
+    try:
+        entries = scan_dataset(data_dir)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(400, str(e))
+
+    training_data = []
+    for entry in entries:
+        audio = load_and_prepare_audio(entry["file"], target_sr=pipe.sample_rate)
+        chunks = chunk_audio(audio, pipe.sample_rate, req.chunk_seconds)
+        for chunk in chunks:
+            chunk_mx = mx.array(chunk)[mx.newaxis, :, mx.newaxis]
+            codes, _scales = pipe.encodec.encode(chunk_mx)
+            tokens = mx.swapaxes(codes, 1, 2)
+            delayed, valid = apply_delay_pattern(
+                tokens,
+                pipe.config.decoder.num_codebooks,
+                pipe.config.decoder.bos_token_id,
+            )
+            training_data.append(
+                {
+                    "delayed_tokens": delayed,
+                    "valid_mask": valid,
+                    "text": entry["text"],
+                }
+            )
+
+    if not training_data:
+        raise HTTPException(400, "No valid training samples produced")
+
+    # Create trainer
+    job_id = str(uuid.uuid4())[:8]
+    trainer = LoRATrainer(
+        pipeline=pipe,
+        config=config,
+        training_data=training_data,
+    )
+
+    with _training_lock:
+        _active_trainer[job_id] = trainer
+
+    # Run in thread pool
+    def _run_training() -> None:
+        try:
+            trainer.train()
+        except Exception as e:
+            print(f"Training {job_id} failed: {e}")
+        finally:
+            with _training_lock:
+                _active_trainer.pop(job_id, None)
+
+    _executor.submit(_run_training)
+    return {"id": job_id, "status": "running"}
+
+
+@app.get("/api/train/status/{job_id}")
+def get_train_status(job_id: str) -> dict:
+    """Get training progress."""
+    with _training_lock:
+        trainer = _active_trainer.get(job_id)
+    if trainer is None:
+        raise HTTPException(404, f"Training job not found: {job_id}")
+    return trainer.status  # type: ignore[union-attr]
+
+
+@app.post("/api/train/stop/{job_id}")
+def stop_training(job_id: str) -> dict:
+    """Stop an active training job."""
+    with _training_lock:
+        trainer = _active_trainer.get(job_id)
+    if trainer is None:
+        raise HTTPException(404, f"Training job not found: {job_id}")
+    trainer.stop()  # type: ignore[union-attr]
+    return {"stopped": job_id}
+
+
 @app.post("/api/generate")
 def submit_generation(req: GenerateRequest) -> GenerateResponse:
     """Submit a generation request. Returns immediately with a job ID."""
@@ -947,6 +1161,59 @@ def _trim_to_exact_duration(
     return audio
 
 
+def _apply_lora_to_pipeline(
+    pipe: object,
+    lora_name: str | None,
+) -> None:
+    """Apply or swap a LoRA adapter on a MusicGen pipeline.
+
+    Tracks which LoRA is currently applied via _active_loras dict.
+    If the requested LoRA is already applied, does nothing.
+    If a different LoRA is applied, removes it first.
+    """
+    import mlx.core as mx
+
+    from mlx_audiogen.lora.config import DEFAULT_LORAS_DIR
+    from mlx_audiogen.lora.inject import apply_lora, remove_lora
+    from mlx_audiogen.lora.trainer import load_lora_config
+    from mlx_audiogen.shared.hub import load_safetensors
+
+    model = pipe.model  # type: ignore[attr-defined]
+    pipe_id = id(pipe)
+    current = _active_loras.get(str(pipe_id))
+
+    if lora_name == current:
+        return  # Already applied (or both None)
+
+    # Remove current LoRA if any
+    if current is not None:
+        remove_lora(model)
+        _active_loras[str(pipe_id)] = None
+
+    if lora_name is None:
+        return
+
+    # Load and apply new LoRA
+    lora_dir = DEFAULT_LORAS_DIR / lora_name
+    if not lora_dir.is_dir():
+        raise ValueError(f"LoRA not found: {lora_name}")
+
+    lora_config = load_lora_config(lora_dir)
+    apply_lora(
+        model,
+        targets=lora_config.targets,
+        rank=lora_config.rank,
+        alpha=lora_config.alpha,
+    )
+    lora_weights = load_safetensors(lora_dir / "lora.safetensors")
+    model.load_weights(
+        [(k, mx.array(v)) for k, v in lora_weights.items()],
+        strict=False,
+    )
+    _active_loras[str(pipe_id)] = lora_name
+    print(f"LoRA applied: {lora_name}")
+
+
 def _generate_musicgen(
     req: GenerateRequest,
     on_progress: object = None,
@@ -955,6 +1222,9 @@ def _generate_musicgen(
     from mlx_audiogen.models.musicgen import MusicGenPipeline
 
     pipe: MusicGenPipeline = _get_pipeline("musicgen")  # type: ignore[assignment]
+
+    # Apply/swap LoRA if requested
+    _apply_lora_to_pipeline(pipe, req.lora)
 
     # Request extra time to compensate for codec frame boundary losses,
     # then trim to the exact requested duration.
