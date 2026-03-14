@@ -739,8 +739,14 @@ _training_lock = Lock()
 class TrainRequest(BaseModel):
     """Request body for POST /api/train."""
 
-    data_dir: str = Field(
-        ..., min_length=1, max_length=1024, description="Path to training data"
+    data_dir: Optional[str] = Field(
+        default=None, min_length=1, max_length=1024,
+        description="Path to training data (required unless collection is provided)",
+    )
+    collection: Optional[str] = Field(
+        default=None, min_length=1, max_length=64,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Collection name to use as training data source",
     )
     base_model: str = Field(
         ..., min_length=1, max_length=200, description="Base model name"
@@ -826,12 +832,9 @@ def start_training(req: TrainRequest) -> dict:
     from mlx_audiogen.lora.trainer import LoRATrainer
     from mlx_audiogen.models.musicgen import MusicGenPipeline
 
-    # Validate data_dir
-    data_dir = Path(req.data_dir)
-    if ".." in data_dir.parts:
-        raise HTTPException(400, "data_dir must not contain '..'")
-    if not data_dir.is_dir():
-        raise HTTPException(400, f"Data directory not found: {req.data_dir}")
+    # Validate data source: either data_dir or collection is required
+    if not req.data_dir and not req.collection:
+        raise HTTPException(400, "Either data_dir or collection must be provided")
 
     # Load pipeline
     pipe: MusicGenPipeline = _get_pipeline("musicgen")  # type: ignore[assignment]
@@ -859,9 +862,21 @@ def start_training(req: TrainRequest) -> dict:
         patience=req.patience,
     )
 
-    # Scan and prepare data
+    # Scan and prepare data — from collection or data_dir
     try:
-        entries = scan_dataset(data_dir)
+        if req.collection:
+            from mlx_audiogen.library.collections import collection_to_training_data
+
+            entries = collection_to_training_data(req.collection)
+        else:
+            data_dir = Path(req.data_dir)  # type: ignore[arg-type]
+            if ".." in data_dir.parts:
+                raise HTTPException(400, "data_dir must not contain '..'")
+            if not data_dir.is_dir():
+                raise HTTPException(
+                    400, f"Data directory not found: {req.data_dir}"
+                )
+            entries = scan_dataset(data_dir)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(400, str(e))
 
@@ -1109,6 +1124,145 @@ def get_library_playlist_tracks(source_id: str, playlist_id: str) -> dict:
         "tracks": [t.to_dict() for t in tracks],
         "count": len(tracks),
     }
+
+
+# ---------------------------------------------------------------------------
+# Collection Endpoints (Phase 9g-2)
+# ---------------------------------------------------------------------------
+
+_COLLECTION_NAME_RE_STR = r"^[a-zA-Z0-9_-]{1,64}$"
+
+
+class CreateCollectionRequest(BaseModel):
+    """Request body for POST /api/collections."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=_COLLECTION_NAME_RE_STR,
+        description="Collection name",
+    )
+    source: str = Field(default="", max_length=128)
+    playlist: str = Field(default="", max_length=256)
+    tracks: list[dict] = Field(default_factory=list)
+
+
+class UpdateCollectionRequest(BaseModel):
+    """Request body for PUT /api/collections/{name}."""
+
+    tracks: Optional[list[dict]] = None
+    source: Optional[str] = Field(default=None, max_length=128)
+    playlist: Optional[str] = Field(default=None, max_length=256)
+
+
+@app.get("/api/collections")
+def list_collections_endpoint() -> list[dict]:
+    """List all saved collections."""
+    from mlx_audiogen.library.collections import list_collections
+
+    return list_collections()
+
+
+@app.get("/api/collections/{name}")
+def get_collection_endpoint(name: str) -> dict:
+    """Get a collection by name."""
+    from mlx_audiogen.library.collections import get_collection
+
+    try:
+        return get_collection(name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.post("/api/collections")
+def create_collection_endpoint(req: CreateCollectionRequest) -> dict:
+    """Create a new collection."""
+    from mlx_audiogen.library.collections import create_collection
+
+    data = req.model_dump()
+    try:
+        return create_collection(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/collections/{name}")
+def update_collection_endpoint(name: str, req: UpdateCollectionRequest) -> dict:
+    """Update an existing collection."""
+    from mlx_audiogen.library.collections import update_collection
+
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    try:
+        return update_collection(name, updates)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.delete("/api/collections/{name}")
+def delete_collection_endpoint(name: str) -> dict:
+    """Delete a collection."""
+    from mlx_audiogen.library.collections import delete_collection
+
+    try:
+        delete_collection(name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    return {"deleted": name}
+
+
+@app.get("/api/collections/{name}/export")
+def export_collection(name: str) -> Response:
+    """Export a collection as a downloadable JSON file."""
+    from mlx_audiogen.library.collections import get_collection
+
+    try:
+        data = get_collection(name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+    content = json_mod.dumps(data, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}.json"',
+        },
+    )
+
+
+@app.post("/api/collections/import")
+async def import_collection(file: UploadFile) -> dict:
+    """Import a collection from an uploaded JSON file."""
+    from mlx_audiogen.library.collections import create_collection
+
+    if file.content_type and "json" not in file.content_type:
+        raise HTTPException(400, "File must be JSON")
+
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:  # 10MB limit
+        raise HTTPException(400, "File too large (max 10MB)")
+
+    try:
+        data = json_mod.loads(raw)
+    except json_mod.JSONDecodeError:
+        raise HTTPException(400, "Invalid JSON file")
+
+    if not isinstance(data, dict) or "name" not in data:
+        raise HTTPException(400, "JSON must be an object with a 'name' field")
+
+    try:
+        return create_collection(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/generate")
