@@ -14,6 +14,7 @@ import ServerPanel from "./components/ServerPanel";
 import TransportBar from "./components/TransportBar";
 import TabBar from "./components/TabBar";
 import SuggestPanel from "./components/SuggestPanel";
+import QueuePanel from "./components/QueuePanel";
 
 const TABS = [
   { id: "generate", label: "Generate" },
@@ -153,6 +154,7 @@ export default function App() {
                 <EnhancePreview />
                 <ParameterPanel />
                 <GenerateButton />
+                <QueuePanel />
               </>
             )}
 

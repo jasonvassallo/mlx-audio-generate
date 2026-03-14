@@ -150,6 +150,15 @@ interface AppState {
   // --- Server Connection ---
   serverUrl: string; // "" = local, or "http://host:port"
   setServerUrl: (url: string) => void;
+
+  // --- Batch Queue ---
+  queue: GenerateRequest[];
+  queueRunning: boolean;
+  queueProgress: { current: number; total: number } | null;
+  addToQueue: (item?: GenerateRequest) => void;
+  removeFromQueue: (index: number) => void;
+  clearQueue: () => void;
+  runQueue: () => Promise<void>;
 }
 
 const DEFAULT_PARAMS: GenerateRequest = {
@@ -589,5 +598,62 @@ export const useStore = create<AppState>((set, get) => ({
       console.error("Failed to separate stems:", e);
       set((s) => ({ stemsLoading: { ...s.stemsLoading, [jobId]: false } }));
     }
+  },
+
+  // --- Batch Queue ---
+  queue: [],
+  queueRunning: false,
+  queueProgress: null,
+  addToQueue: (item?: GenerateRequest) => {
+    const params = item ?? { ...get().params };
+    if (!params.prompt.trim()) return;
+    set((s) => ({ queue: [...s.queue, params] }));
+  },
+  removeFromQueue: (index: number) => {
+    set((s) => ({ queue: s.queue.filter((_, i) => i !== index) }));
+  },
+  clearQueue: () => set({ queue: [] }),
+  runQueue: async () => {
+    const { queue, queueRunning } = get();
+    if (queueRunning || queue.length === 0) return;
+
+    set({ queueRunning: true, queueProgress: { current: 0, total: queue.length } });
+    const items = [...queue];
+
+    for (let i = 0; i < items.length; i++) {
+      if (!get().queueRunning) break; // cancelled
+      set({ queueProgress: { current: i + 1, total: items.length } });
+
+      try {
+        const { id } = await submitGeneration(items[i]!);
+
+        // Poll until done
+        let job: JobInfo;
+        do {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+          job = await fetchJobStatus(id);
+          set({ activeJob: job });
+        } while (job.status !== "done" && job.status !== "error");
+
+        if (job.status === "done") {
+          const audioRes = await fetch(getAudioUrl(job.id));
+          const audioBlob = await audioRes.blob();
+          const now = Date.now();
+          const persisted: PersistedEntry = {
+            id: job.id, job, audioBlob, favorite: false, createdAt: now, sourceBpm: 0,
+          };
+          await saveEntry(persisted);
+          const entry: HistoryEntry = {
+            id: job.id, job, audioUrl: URL.createObjectURL(audioBlob),
+            favorite: false, createdAt: now, sourceBpm: 0,
+          };
+          set((s) => ({ history: [entry, ...s.history] }));
+        }
+      } catch (e) {
+        console.error(`Queue item ${i + 1} failed:`, e);
+      }
+    }
+
+    set({ queueRunning: false, queueProgress: null, queue: [], activeJob: null });
   },
 }));
