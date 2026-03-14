@@ -935,6 +935,182 @@ def stop_training(job_id: str) -> dict:
     return {"stopped": job_id}
 
 
+# ---------------------------------------------------------------------------
+# Library Scanner Endpoints (Phase 9g-2)
+# ---------------------------------------------------------------------------
+
+# Module-level library cache singleton (lazily populated via scan)
+_library_cache = None
+
+
+def _get_library_cache():
+    """Get or create the LibraryCache singleton."""
+    global _library_cache
+    if _library_cache is None:
+        from mlx_audiogen.library.cache import LibraryCache
+
+        _library_cache = LibraryCache()
+    return _library_cache
+
+
+class AddSourceRequest(BaseModel):
+    """Request body for POST /api/library/sources."""
+
+    type: str = Field(
+        ..., pattern=r"^(apple_music|rekordbox)$", description="Source type"
+    )
+    path: str = Field(
+        ..., min_length=1, max_length=2048, description="Path to XML export file"
+    )
+    label: str = Field(
+        ..., min_length=1, max_length=128, description="Display name"
+    )
+
+
+class UpdateSourceRequest(BaseModel):
+    """Request body for PUT /api/library/sources/{id}."""
+
+    path: Optional[str] = Field(
+        default=None, min_length=1, max_length=2048, description="New XML path"
+    )
+    label: Optional[str] = Field(
+        default=None, min_length=1, max_length=128, description="New display name"
+    )
+
+
+@app.get("/api/library/sources")
+def list_library_sources() -> list[dict]:
+    """List all configured library sources."""
+    cache = _get_library_cache()
+    return [s.to_dict() for s in cache.list_sources()]
+
+
+@app.post("/api/library/sources")
+def add_library_source(req: AddSourceRequest) -> dict:
+    """Add a new library source (Apple Music or rekordbox XML)."""
+    cache = _get_library_cache()
+    # Validate path
+    p = Path(req.path).expanduser()
+    if ".." in p.parts:
+        raise HTTPException(400, "Path must not contain '..'")
+    if not p.is_file():
+        raise HTTPException(400, f"XML file not found: {req.path}")
+    source = cache.add_source(type=req.type, path=str(p), label=req.label)
+    return source.to_dict()
+
+
+@app.put("/api/library/sources/{source_id}")
+def update_library_source(source_id: str, req: UpdateSourceRequest) -> dict:
+    """Update an existing library source's path and/or label."""
+    cache = _get_library_cache()
+    # Validate path if provided
+    if req.path is not None:
+        p = Path(req.path).expanduser()
+        if ".." in p.parts:
+            raise HTTPException(400, "Path must not contain '..'")
+        if not p.is_file():
+            raise HTTPException(400, f"XML file not found: {req.path}")
+    try:
+        source = cache.update_source(source_id, path=req.path, label=req.label)
+    except KeyError:
+        raise HTTPException(404, f"Source not found: {source_id}")
+    return source.to_dict()
+
+
+@app.delete("/api/library/sources/{source_id}")
+def delete_library_source(source_id: str) -> dict:
+    """Remove a library source and its cached data."""
+    cache = _get_library_cache()
+    try:
+        cache.remove_source(source_id)
+    except KeyError:
+        raise HTTPException(404, f"Source not found: {source_id}")
+    return {"deleted": source_id}
+
+
+@app.post("/api/library/scan/{source_id}")
+def scan_library_source(source_id: str) -> dict:
+    """Parse/refresh a library source XML file."""
+    cache = _get_library_cache()
+    try:
+        source = cache.scan(source_id)
+    except KeyError:
+        raise HTTPException(404, f"Source not found: {source_id}")
+    except FileNotFoundError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return source.to_dict()
+
+
+@app.get("/api/library/playlists/{source_id}")
+def get_library_playlists(source_id: str) -> list[dict]:
+    """List playlists for a library source."""
+    cache = _get_library_cache()
+    playlists = cache.get_playlists(source_id)
+    return [p.to_dict() for p in playlists]
+
+
+@app.get("/api/library/tracks/{source_id}")
+def get_library_tracks(
+    source_id: str,
+    q: Optional[str] = None,
+    artist: Optional[str] = None,
+    album: Optional[str] = None,
+    genre: Optional[str] = None,
+    key: Optional[str] = None,
+    bpm_min: Optional[float] = None,
+    bpm_max: Optional[float] = None,
+    year_min: Optional[int] = None,
+    year_max: Optional[int] = None,
+    rating_min: Optional[int] = None,
+    loved: Optional[bool] = None,
+    available: Optional[bool] = None,
+    sort: Optional[str] = None,
+    order: str = "asc",
+    offset: int = 0,
+    limit: int = 50,
+) -> dict:
+    """Search, filter, sort, and paginate tracks from a library source."""
+    cache = _get_library_cache()
+    tracks = cache.search_tracks(
+        source_id,
+        q=q,
+        artist=artist,
+        album=album,
+        genre=genre,
+        key=key,
+        bpm_min=bpm_min,
+        bpm_max=bpm_max,
+        year_min=year_min,
+        year_max=year_max,
+        rating_min=rating_min,
+        loved=loved,
+        available=available,
+        sort=sort,
+        order=order,
+        offset=offset,
+        limit=limit,
+    )
+    return {
+        "tracks": [t.to_dict() for t in tracks],
+        "count": len(tracks),
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+@app.get("/api/library/playlist-tracks/{source_id}/{playlist_id}")
+def get_library_playlist_tracks(source_id: str, playlist_id: str) -> dict:
+    """Get tracks in a specific playlist."""
+    cache = _get_library_cache()
+    tracks = cache.get_playlist_tracks(source_id, playlist_id)
+    return {
+        "tracks": [t.to_dict() for t in tracks],
+        "count": len(tracks),
+    }
+
+
 @app.post("/api/generate")
 def submit_generation(req: GenerateRequest) -> GenerateResponse:
     """Submit a generation request. Returns immediately with a job ID."""
