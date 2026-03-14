@@ -144,8 +144,10 @@ class StableAudioPipeline:
         seed: Optional[int] = None,
         sampler: str = "euler",
         progress_callback: object = None,
+        reference_audio: Optional[mx.array] = None,
+        reference_strength: float = 0.7,
     ) -> mx.array:
-        """Generate audio from a text prompt.
+        """Generate audio from a text prompt, optionally guided by reference audio.
 
         Args:
             prompt: Text description of desired audio.
@@ -156,6 +158,13 @@ class StableAudioPipeline:
             sigma_max: Maximum sigma for rectified flow schedule.
             seed: Random seed for reproducibility.
             sampler: 'euler' (fast) or 'rk4' (accurate).
+            reference_audio: Optional reference audio tensor (1, channels, samples)
+                at 44.1kHz. When provided, the generation starts from the reference's
+                latent representation with noise added, producing audio that blends
+                the reference structure with the text prompt (audio-to-audio).
+            reference_strength: How much to deviate from the reference (0.0 = exact
+                copy, 1.0 = fully random, 0.7 = good creative balance). Controls
+                what fraction of the diffusion process is run.
 
         Returns:
             Audio tensor of shape (1, channels, samples).
@@ -186,13 +195,53 @@ class StableAudioPipeline:
         if cfg_scale > 1.0:
             uncond_tokens, _ = self.conditioners(negative_prompt, seconds_total)
 
-        # Initialize noise in latent space
+        # Initialize latent space
         latent_rate = self.config.sample_rate / 2048  # ~21.5 Hz for 44100
         latent_length = int(seconds_total * latent_rate)
-        latents = mx.random.normal((1, 64, latent_length))
 
-        # Timestep schedule
-        timesteps = get_rf_schedule(steps, sigma_max)
+        if reference_audio is not None:
+            # Audio-to-audio: encode reference through VAE, add noise
+            print("Encoding reference audio through VAE...")
+            # VAE expects (B, T, C) — reference_audio is (1, C, T)
+            ref_input = reference_audio.transpose(0, 2, 1)
+            _materialize(ref_input)
+
+            ref_latent = self.vae.encode(ref_input)
+            _materialize(ref_latent)
+
+            # VAE encoder outputs (B, T, 2*C) — take first half as mean
+            ref_latent = ref_latent[:, :, :64]
+            # Transpose to (B, C, T) to match DiT expected layout
+            ref_latent = ref_latent.transpose(0, 2, 1)
+
+            # Pad or trim reference latent to target length
+            ref_len = ref_latent.shape[2]
+            if ref_len < latent_length:
+                pad = mx.zeros((1, 64, latent_length - ref_len))
+                ref_latent = mx.concatenate([ref_latent, pad], axis=2)
+            elif ref_len > latent_length:
+                ref_latent = ref_latent[:, :, :latent_length]
+
+            # Add noise proportional to reference_strength
+            # strength=0 → pure reference, strength=1 → pure noise
+            noise = mx.random.normal((1, 64, latent_length))
+            strength = max(0.0, min(1.0, reference_strength))
+            latents = ref_latent * (1.0 - strength) + noise * strength
+            _materialize(latents)
+
+            # Skip early timesteps proportional to (1-strength)
+            # More strength = more steps = more creative freedom
+            skip_steps = int(steps * (1.0 - strength))
+            timesteps = get_rf_schedule(steps, sigma_max)
+            timesteps = timesteps[skip_steps:]
+            actual_steps = len(timesteps) - 1
+            print(
+                f"Audio-to-audio: strength={strength:.2f}, "
+                f"skipping {skip_steps}/{steps} steps, running {actual_steps}"
+            )
+        else:
+            latents = mx.random.normal((1, 64, latent_length))
+            timesteps = get_rf_schedule(steps, sigma_max)
 
         # Sample
         print(f"Sampling ({sampler.upper()}, {steps} steps, CFG {cfg_scale})...")

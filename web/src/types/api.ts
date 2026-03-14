@@ -23,6 +23,9 @@ export interface GenerateRequest {
   melody_path?: string | null;
   style_audio_path?: string | null;
   style_coef?: number;
+  // Audio-to-audio (Stable Audio only)
+  reference_audio_path?: string | null;
+  reference_strength?: number;
 }
 
 /** Prompt analysis result from /api/suggest. */

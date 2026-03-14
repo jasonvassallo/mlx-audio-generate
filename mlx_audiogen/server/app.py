@@ -179,6 +179,9 @@ class GenerateRequest(BaseModel):
     melody_path: Optional[str] = Field(default=None, max_length=1024)
     style_audio_path: Optional[str] = Field(default=None, max_length=1024)
     style_coef: float = Field(default=5.0, ge=0)
+    # Audio-to-audio: reference audio path + strength (Phase 9f)
+    reference_audio_path: Optional[str] = Field(default=None, max_length=1024)
+    reference_strength: float = Field(default=0.7, ge=0.0, le=1.0)
 
 
 class JobInfo(BaseModel):
@@ -985,6 +988,30 @@ def _generate_stable_audio(
     from mlx_audiogen.models.stable_audio import StableAudioPipeline
 
     pipe: StableAudioPipeline = _get_pipeline("stable_audio")  # type: ignore[assignment]
+
+    # Load reference audio for audio-to-audio if provided
+    ref_audio_mx = None
+    if req.reference_audio_path:
+        validated = _validate_audio_path(req.reference_audio_path, "reference_audio")
+        if validated:
+            import mlx.core as mx
+
+            from mlx_audiogen.shared.audio_io import load_wav
+
+            ref_np, ref_sr = load_wav(validated)
+            # Resample to 44.1kHz if needed (simple linear for now)
+            if ref_sr != 44100:
+                import numpy as np_ref
+
+                target_len = int(len(ref_np) * 44100 / ref_sr)
+                ref_np = np_ref.interp(
+                    np_ref.linspace(0, len(ref_np) - 1, target_len),
+                    np_ref.arange(len(ref_np)),
+                    ref_np,
+                )
+            # Shape: (1, 1, samples) for mono, (1, 2, samples) for stereo
+            ref_audio_mx = mx.array(ref_np).reshape(1, 1, -1)
+
     audio = pipe.generate(
         prompt=req.prompt,
         negative_prompt=req.negative_prompt,
@@ -994,6 +1021,8 @@ def _generate_stable_audio(
         seed=req.seed,
         sampler=req.sampler,
         progress_callback=on_progress,
+        reference_audio=ref_audio_mx,
+        reference_strength=req.reference_strength,
     )
 
     audio = _trim_to_exact_duration(audio, req.seconds, 44100, 2)  # type: ignore[arg-type, assignment]

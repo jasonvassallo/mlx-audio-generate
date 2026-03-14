@@ -176,6 +176,17 @@ function StableAudioParams() {
         disabled={isGenerating}
       />
 
+      {/* Reference Strength (audio-to-audio) */}
+      <ParamSlider
+        label="Ref. Strength"
+        value={params.reference_strength ?? 0.7}
+        onChange={(v) => setParam("reference_strength", v)}
+        min={0}
+        max={1}
+        step={0.05}
+        disabled={isGenerating}
+      />
+
       {/* Sampler dropdown */}
       <div className="space-y-1">
         <label className="text-xs font-medium text-text-secondary">

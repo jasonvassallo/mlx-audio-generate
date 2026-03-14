@@ -121,6 +121,19 @@ def main():
         help="Style dual-CFG text influence coefficient "
         "(musicgen style variants only, default 5.0)",
     )
+    # Audio-to-audio (Phase 9f)
+    parser.add_argument(
+        "--reference-audio",
+        type=str,
+        default=None,
+        help="Reference audio path for audio-to-audio (stable_audio)",
+    )
+    parser.add_argument(
+        "--reference-strength",
+        type=float,
+        default=0.7,
+        help="Deviation from reference (0=copy, 1=random, default 0.7)",
+    )
     # General
     parser.add_argument(
         "--weights-dir",
@@ -181,10 +194,44 @@ def main():
         print("Error: --style-coef must be non-negative")
         sys.exit(1)
 
+    # Validate reference audio path if provided
+    if args.reference_audio is not None:
+        ref_file = Path(args.reference_audio).resolve()
+        if not ref_file.is_file():
+            print(f"Error: Reference audio file not found: {args.reference_audio}")
+            sys.exit(1)
+        if ".." in Path(args.reference_audio).parts:
+            print("Error: Reference audio path must not contain '..'")
+            sys.exit(1)
+    if args.reference_strength < 0 or args.reference_strength > 1:
+        print("Error: --reference-strength must be between 0.0 and 1.0")
+        sys.exit(1)
+
     if args.model == "stable_audio":
         from mlx_audiogen.models.stable_audio import StableAudioPipeline
 
         pipe = StableAudioPipeline.from_pretrained(weights_dir)
+
+        # Load reference audio for audio-to-audio
+        ref_audio_mx = None
+        if args.reference_audio:
+            import mlx.core as mx
+
+            from mlx_audiogen.shared.audio_io import load_wav
+
+            ref_np, ref_sr = load_wav(args.reference_audio)
+            # Simple resample to 44.1kHz if needed
+            if ref_sr != 44100:
+                import numpy as np
+
+                target_len = int(len(ref_np) * 44100 / ref_sr)
+                ref_np = np.interp(
+                    np.linspace(0, len(ref_np) - 1, target_len),
+                    np.arange(len(ref_np)),
+                    ref_np,
+                )
+            ref_audio_mx = mx.array(ref_np).reshape(1, 1, -1)
+
         audio = pipe.generate(
             prompt=args.prompt,
             negative_prompt=args.negative_prompt,
@@ -193,6 +240,8 @@ def main():
             cfg_scale=args.cfg_scale,
             seed=args.seed,
             sampler=args.sampler,
+            reference_audio=ref_audio_mx,
+            reference_strength=args.reference_strength,
         )
         sample_rate = 44100
         channels = 2
