@@ -90,9 +90,9 @@ export function fetchJobStatus(jobId: string): Promise<JobInfo> {
   return request<JobInfo>(`/status/${jobId}`);
 }
 
-/** Get the URL for downloading generated audio. */
-export function getAudioUrl(jobId: string): string {
-  return `${_base}/audio/${jobId}`;
+/** Get the URL for downloading generated audio in the specified format. */
+export function getAudioUrl(jobId: string, fmt: string = "aiff"): string {
+  return `${_base}/audio/${jobId}?fmt=${fmt}`;
 }
 
 /** Get the URL for downloading generated MIDI. */

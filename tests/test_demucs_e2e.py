@@ -233,5 +233,5 @@ class TestServerStemEndpoint:
             stem_id = data["stems"][stem_name]
             audio_res = client.get(f"/api/audio/{stem_id}")
             assert audio_res.status_code == 200
-            assert audio_res.headers["content-type"] == "audio/wav"
-            assert len(audio_res.content) > 44  # WAV header + some data
+            assert audio_res.headers["content-type"] == "audio/aiff"
+            assert len(audio_res.content) > 44  # AIFF header + some data

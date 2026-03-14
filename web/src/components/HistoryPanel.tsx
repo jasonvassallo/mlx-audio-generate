@@ -1,5 +1,5 @@
 import { useStore } from "../store/useStore";
-import { getMidiUrl } from "../api/client";
+import { getAudioUrl, getMidiUrl } from "../api/client";
 import AudioPlayer from "./AudioPlayer";
 
 const STEM_COLORS: Record<string, { bg: string; text: string }> = {
@@ -57,8 +57,18 @@ export default function HistoryPanel() {
         {history.map((entry, i) => (
           <div
             key={entry.id}
+            draggable
+            onDragStart={(e) => {
+              // Set audio blob for drag-to-DAW / Finder
+              e.dataTransfer.setData("text/uri-list", entry.audioUrl);
+              e.dataTransfer.setData(
+                "text/plain",
+                `${entry.job.model}_${entry.id}.wav`,
+              );
+              e.dataTransfer.effectAllowed = "copy";
+            }}
             className={`
-              rounded border bg-surface-1 p-3 space-y-2
+              rounded border bg-surface-1 p-3 space-y-2 cursor-grab active:cursor-grabbing
               ${entry.favorite ? "border-accent/40" : "border-border"}
             `}
           >
@@ -204,14 +214,21 @@ export default function HistoryPanel() {
                     : "Separate"}
               </button>
 
-              {/* WAV download */}
-              <a
-                href={entry.audioUrl}
-                download={`${entry.job.model}_${entry.id}.wav`}
-                className="rounded bg-surface-2 px-2 py-1 text-xs text-text-secondary hover:bg-surface-3"
-              >
-                WAV
-              </a>
+              {/* Format downloads */}
+              {["AIFF", "WAV", "FLAC"].map((fmt) => (
+                <a
+                  key={fmt}
+                  href={getAudioUrl(entry.id, fmt.toLowerCase())}
+                  download={`${entry.job.model}_${entry.id}.${fmt.toLowerCase()}`}
+                  className={`rounded bg-surface-2 px-2 py-1 text-xs hover:bg-surface-3 ${
+                    fmt === "AIFF"
+                      ? "text-accent"
+                      : "text-text-secondary"
+                  }`}
+                >
+                  {fmt}
+                </a>
+              ))}
             </div>
 
             {/* Expanded stems section */}

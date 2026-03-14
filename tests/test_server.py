@@ -221,11 +221,27 @@ def test_audio_download_success(client: TestClient):
     job.channels = 1
     _jobs["done-123"] = job
 
+    # Default format is AIFF
     res = client.get("/api/audio/done-123")
     assert res.status_code == 200
-    assert res.headers["content-type"] == "audio/wav"
-    assert "done-123.wav" in res.headers["content-disposition"]
-    assert len(res.content) > 44  # WAV header is 44 bytes
+    assert res.headers["content-type"] == "audio/aiff"
+    assert "done-123.aiff" in res.headers["content-disposition"]
+    assert len(res.content) > 44
+
+    # Explicit WAV format
+    res_wav = client.get("/api/audio/done-123?fmt=wav")
+    assert res_wav.status_code == 200
+    assert res_wav.headers["content-type"] == "audio/wav"
+    assert "done-123.wav" in res_wav.headers["content-disposition"]
+
+    # FLAC format
+    res_flac = client.get("/api/audio/done-123?fmt=flac")
+    assert res_flac.status_code == 200
+    assert res_flac.headers["content-type"] == "audio/flac"
+
+    # Unsupported format
+    res_bad = client.get("/api/audio/done-123?fmt=mp3")
+    assert res_bad.status_code == 400
 
 
 # ---------------------------------------------------------------------------

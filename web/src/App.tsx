@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useStore } from "./store/useStore";
 import { useServerHeartbeat } from "./hooks/useServerHeartbeat";
 import Header from "./components/Header";
@@ -39,6 +39,64 @@ export default function App() {
     loadSettings();
     loadTags();
   }, [loadModels, loadHistory, loadSettings, loadTags]);
+
+  // Global keyboard shortcuts
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInput =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+
+      // Tab switching: 1/2/3 (only when not typing in input)
+      if (!isInput && !e.metaKey && !e.ctrlKey) {
+        if (e.key === "1") {
+          e.preventDefault();
+          setActiveTab("generate");
+          return;
+        }
+        if (e.key === "2") {
+          e.preventDefault();
+          setActiveTab("suggest");
+          return;
+        }
+        if (e.key === "3") {
+          e.preventDefault();
+          setActiveTab("settings");
+          return;
+        }
+      }
+
+      // Escape: dismiss enhance preview
+      if (e.key === "Escape") {
+        const { enhanceResult, clearEnhanceResult } = useStore.getState();
+        if (enhanceResult) {
+          e.preventDefault();
+          clearEnhanceResult();
+          return;
+        }
+      }
+
+      // Space: play/pause most recent audio (only when not in input)
+      if (e.key === " " && !isInput) {
+        e.preventDefault();
+        // Find the first audio element in history and toggle
+        const audioEls = document.querySelectorAll("audio");
+        if (audioEls.length > 0) {
+          const audio = audioEls[0] as HTMLAudioElement;
+          if (audio.paused) audio.play().catch(() => {});
+          else audio.pause();
+        }
+      }
+    },
+    [setActiveTab],
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
 
   return (
     <div className="flex h-screen flex-col bg-surface-0">

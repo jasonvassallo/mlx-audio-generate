@@ -763,10 +763,14 @@ def get_status(job_id: str) -> JobInfo:
 
 
 @app.get("/api/audio/{job_id}")
-def get_audio(job_id: str) -> Response:
-    """Download generated audio as WAV.
+def get_audio(job_id: str, fmt: str = "aiff") -> Response:
+    """Download generated audio in the requested format.
 
-    Returns 404 if job not found, 202 if still running, or audio/wav if done.
+    Args:
+        job_id: The job ID.
+        fmt: Audio format — aiff (default), wav, flac.
+
+    Returns 404 if job not found, 202 if still running, or audio file if done.
     """
     job = _jobs.get(job_id)
     if job is None:
@@ -780,13 +784,20 @@ def get_audio(job_id: str) -> Response:
     if job.audio is None:
         raise HTTPException(500, "Audio data missing from completed job.")
 
-    # Encode as WAV in memory
-    wav_bytes = _encode_wav(job.audio, job.sample_rate or 32000, job.channels)
+    fmt = fmt.lower()
+    if fmt not in _AUDIO_FORMATS:
+        raise HTTPException(
+            400, f"Unsupported format: {fmt}. Use: {', '.join(_AUDIO_FORMATS)}"
+        )
+
+    audio_bytes = _encode_audio(job.audio, job.sample_rate or 32000, job.channels, fmt)
+    ext = fmt
+    media_type = _AUDIO_MEDIA_TYPES.get(fmt, "application/octet-stream")
     return Response(
-        content=wav_bytes,
-        media_type="audio/wav",
+        content=audio_bytes,
+        media_type=media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{job_id}.wav"',
+            "Content-Disposition": f'attachment; filename="{job_id}.{ext}"',
         },
     )
 
@@ -1020,17 +1031,33 @@ def _validate_audio_path(path_str: Optional[str], label: str) -> Optional[str]:
     return str(resolved)
 
 
-def _encode_wav(audio: np.ndarray, sample_rate: int, channels: int) -> bytes:
-    """Encode audio array as WAV bytes in memory."""
+_AUDIO_FORMATS = {"wav", "aiff", "flac"}
+_AUDIO_MEDIA_TYPES = {
+    "wav": "audio/wav",
+    "aiff": "audio/aiff",
+    "flac": "audio/flac",
+}
+
+
+def _encode_audio(
+    audio: np.ndarray, sample_rate: int, channels: int, fmt: str = "aiff"
+) -> bytes:
+    """Encode audio array in the specified format (wav, aiff, flac)."""
     import soundfile as sf
 
     buf = io.BytesIO()
-    # Reshape for multi-channel if needed
     if channels > 1 and audio.ndim == 1:
-        # Interleaved stereo -> (samples, 2)
         audio = audio.reshape(-1, channels)
-    sf.write(buf, audio, sample_rate, format="WAV", subtype="FLOAT")
+
+    sf_format = fmt.upper()
+    subtype = "FLOAT" if fmt != "flac" else "PCM_24"
+    sf.write(buf, audio, sample_rate, format=sf_format, subtype=subtype)
     return buf.getvalue()
+
+
+def _encode_wav(audio: np.ndarray, sample_rate: int, channels: int) -> bytes:
+    """Encode audio array as WAV bytes in memory (backward compat)."""
+    return _encode_audio(audio, sample_rate, channels, "wav")
 
 
 def _cleanup_old_jobs() -> None:
