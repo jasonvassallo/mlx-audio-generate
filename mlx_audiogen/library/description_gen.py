@@ -11,7 +11,10 @@ from typing import Optional
 from .models import TrackInfo
 
 
-def generate_description(track: TrackInfo) -> str:
+def generate_description(
+    track: TrackInfo,
+    enrichment: dict | None = None,
+) -> str:
     """Build a comma-separated description phrase from available track metadata.
 
     Priority order:
@@ -19,12 +22,17 @@ def generate_description(track: TrackInfo) -> str:
       2. BPM (e.g. "122 BPM")
       3. key (e.g. "4A")
       4. artist style (e.g. "Jimpster style")
+      5. enrichment genres / styles (from MusicBrainz and Discogs)
 
     If all of those fields are empty / None, falls back to the track title
     (lowercased) or — if that is also empty — the string "instrumental track".
 
     Args:
         track: A :class:`TrackInfo` instance.
+        enrichment: Optional dict with ``musicbrainz``, ``lastfm``, and/or
+            ``discogs`` keys, each containing enrichment data dicts (as
+            returned by :meth:`EnrichmentDB.get_all_enrichment`).  When
+            provided, additional genre/style tags are appended.
 
     Returns:
         A non-empty description string.
@@ -48,6 +56,28 @@ def generate_description(track: TrackInfo) -> str:
 
     if track.artist:
         parts.append(f"{track.artist} style")
+
+    # Append enrichment tags (genres from MusicBrainz, styles from Discogs)
+    if enrichment is not None:
+        existing_lower = {p.lower() for p in parts}
+
+        mb = enrichment.get("musicbrainz")
+        if mb is not None:
+            mb_data = mb.get("data", mb) if isinstance(mb, dict) else {}
+            for tag in mb_data.get("tags", []):
+                tag_name = tag if isinstance(tag, str) else tag.get("name", "")
+                if tag_name and tag_name.lower() not in existing_lower:
+                    parts.append(tag_name.lower())
+                    existing_lower.add(tag_name.lower())
+
+        dc = enrichment.get("discogs")
+        if dc is not None:
+            dc_data = dc.get("data", dc) if isinstance(dc, dict) else {}
+            for style in dc_data.get("styles", []):
+                style_name = style if isinstance(style, str) else str(style)
+                if style_name and style_name.lower() not in existing_lower:
+                    parts.append(style_name.lower())
+                    existing_lower.add(style_name.lower())
 
     if parts:
         return ", ".join(parts)
