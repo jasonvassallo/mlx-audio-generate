@@ -145,7 +145,7 @@ def collect_generation_signals(
     def _to_weighted(items: list[str]) -> list[dict[str, Any]]:
         result = []
         for i, name in enumerate(items):
-            weight = round(decay_base ** i, 4)
+            weight = round(decay_base**i, 4)
             result.append({"name": name, "weight": weight})
         return result
 
@@ -154,7 +154,9 @@ def collect_generation_signals(
     gen_instruments = _to_weighted(style_profile.get("instruments", []))
 
     # Average duration
-    durations = [h.get("duration_seconds", 0.0) for h in history if h.get("duration_seconds")]
+    durations = [
+        h.get("duration_seconds", 0.0) for h in history if h.get("duration_seconds")
+    ]
     avg_duration = sum(durations) / len(durations) if durations else 0.0
 
     # Model usage counts

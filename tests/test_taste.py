@@ -1,18 +1,14 @@
 """Tests for mlx_audiogen.library.taste — profile, signals, and engine."""
 
 import json
-import os
-import tempfile
-
-import pytest
 
 from mlx_audiogen.library.models import TrackInfo
+from mlx_audiogen.library.taste.engine import TasteEngine
 from mlx_audiogen.library.taste.profile import TasteProfile, WeightedTag
 from mlx_audiogen.library.taste.signals import (
     collect_generation_signals,
     collect_library_signals,
 )
-from mlx_audiogen.library.taste.engine import TasteEngine
 
 
 def _make_track(**kwargs) -> TrackInfo:

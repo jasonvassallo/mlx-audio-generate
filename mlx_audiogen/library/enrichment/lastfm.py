@@ -1,4 +1,5 @@
 """Last.fm track info client."""
+
 from __future__ import annotations
 
 import logging
@@ -43,9 +44,7 @@ def _parse_lastfm_track_response(data: dict[str, Any]) -> Optional[dict[str, Any
     ]
 
     # Similar artists (derived from similar tracks)
-    similar_artists = list(
-        {s["artist"] for s in similar_tracks if s.get("artist")}
-    )
+    similar_artists = list({s["artist"] for s in similar_tracks if s.get("artist")})
 
     return {
         "tags": tags,
@@ -80,13 +79,16 @@ async def search_lastfm(
     owns_client = client is None
     if owns_client:
         client = create_client()
+    assert client is not None
 
     try:
         resp = await client.get(_BASE_URL, params=params)
         resp.raise_for_status()
         data = resp.json()
         if "error" in data:
-            logger.warning("Last.fm API error %s: %s", data["error"], data.get("message"))
+            logger.warning(
+                "Last.fm API error %s: %s", data["error"], data.get("message")
+            )
             return None
         return _parse_lastfm_track_response(data)
     except httpx.HTTPError as exc:

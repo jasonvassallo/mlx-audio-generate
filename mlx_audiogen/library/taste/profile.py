@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-
 _DEFAULT_PATH = str(Path.home() / ".mlx-audiogen" / "taste_profile.json")
 
 

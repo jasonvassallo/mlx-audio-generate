@@ -146,10 +146,7 @@ class EnrichmentDB:
     _VALID_TABLES: frozenset[str] = frozenset({"musicbrainz", "lastfm", "discogs"})
 
     # Pre-built SQL per table -- no runtime string concatenation.
-    _UPSERT = (
-        "INSERT OR REPLACE INTO {t} "
-        "(track_id, data, fetched_at) VALUES (?, ?, ?)"
-    )
+    _UPSERT = "INSERT OR REPLACE INTO {t} (track_id, data, fetched_at) VALUES (?, ?, ?)"
     _INSERT_SQL: dict[str, str] = {
         "musicbrainz": _UPSERT.format(t="musicbrainz"),
         "lastfm": _UPSERT.format(t="lastfm"),

@@ -2,10 +2,12 @@
 
 import asyncio
 import time
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from mlx_audiogen.library.enrichment.enrichment_db import EnrichmentDB
+from mlx_audiogen.library.enrichment.manager import EnrichmentManager
 from mlx_audiogen.library.enrichment.rate_limiter import ApiRateLimiter
 
 # ===========================================================================
@@ -36,7 +38,8 @@ class TestEnrichmentDB:
     def test_library_id_mapping(self, db):
         """get_or_create_track stores library source and track id."""
         track_id = db.get_or_create_track(
-            "Daft Punk", "Da Funk",
+            "Daft Punk",
+            "Da Funk",
             library_source="apple_music",
             library_track_id="AM-1234",
         )
@@ -227,19 +230,32 @@ class TestApiRateLimiter:
 
 class TestMusicBrainz:
     def test_parse_response(self):
-        from mlx_audiogen.library.enrichment.musicbrainz import _parse_musicbrainz_response
+        from mlx_audiogen.library.enrichment.musicbrainz import (
+            _parse_musicbrainz_response,
+        )
 
-        fake = {"recordings": [{"id": "rec-123", "title": "Strobe",
-            "artist-credit": [{"artist": {"id": "art-456", "name": "deadmau5"}}],
-            "releases": [{"id": "rel-789", "release-group": {"id": "rg-101"}}],
-            "tags": [{"name": "progressive house", "count": 5}]}]}
+        fake = {
+            "recordings": [
+                {
+                    "id": "rec-123",
+                    "title": "Strobe",
+                    "artist-credit": [
+                        {"artist": {"id": "art-456", "name": "deadmau5"}}
+                    ],
+                    "releases": [{"id": "rel-789", "release-group": {"id": "rg-101"}}],
+                    "tags": [{"name": "progressive house", "count": 5}],
+                }
+            ]
+        }
         result = _parse_musicbrainz_response(fake)
         assert result is not None
         assert result["artist_mbid"] == "art-456"
         assert "progressive house" in [t["name"] for t in result["tags"]]
 
     def test_parse_empty(self):
-        from mlx_audiogen.library.enrichment.musicbrainz import _parse_musicbrainz_response
+        from mlx_audiogen.library.enrichment.musicbrainz import (
+            _parse_musicbrainz_response,
+        )
 
         assert _parse_musicbrainz_response({"recordings": []}) is None
 
@@ -253,9 +269,23 @@ class TestLastFm:
     def test_parse_track_response(self):
         from mlx_audiogen.library.enrichment.lastfm import _parse_lastfm_track_response
 
-        fake = {"track": {"name": "Strobe", "listeners": "500000", "playcount": "3000000",
-            "toptags": {"tag": [{"name": "progressive house", "count": "100"}]},
-            "similar": {"track": [{"name": "Ghosts", "artist": {"name": "deadmau5"}, "match": "0.9"}]}}}
+        fake = {
+            "track": {
+                "name": "Strobe",
+                "listeners": "500000",
+                "playcount": "3000000",
+                "toptags": {"tag": [{"name": "progressive house", "count": "100"}]},
+                "similar": {
+                    "track": [
+                        {
+                            "name": "Ghosts",
+                            "artist": {"name": "deadmau5"},
+                            "match": "0.9",
+                        }
+                    ]
+                },
+            }
+        }
         result = _parse_lastfm_track_response(fake)
         assert result is not None
         assert result["listeners"] == 500000
@@ -274,18 +304,34 @@ class TestLastFm:
 
 class TestDiscogs:
     def test_parse_search_response(self):
-        from mlx_audiogen.library.enrichment.discogs import _parse_discogs_search_response
+        from mlx_audiogen.library.enrichment.discogs import (
+            _parse_discogs_search_response,
+        )
 
-        fake = {"results": [{"id": 12345, "type": "master", "title": "CamelPhat - Cola",
-            "genre": ["Electronic"], "style": ["Tech House"], "label": ["Defected"],
-            "catno": "DFTD123", "year": "2017", "country": "UK"}]}
+        fake = {
+            "results": [
+                {
+                    "id": 12345,
+                    "type": "master",
+                    "title": "CamelPhat - Cola",
+                    "genre": ["Electronic"],
+                    "style": ["Tech House"],
+                    "label": ["Defected"],
+                    "catno": "DFTD123",
+                    "year": "2017",
+                    "country": "UK",
+                }
+            ]
+        }
         result = _parse_discogs_search_response(fake)
         assert result is not None
         assert result["genres"] == ["Electronic"]
         assert result["year"] == 2017
 
     def test_parse_empty(self):
-        from mlx_audiogen.library.enrichment.discogs import _parse_discogs_search_response
+        from mlx_audiogen.library.enrichment.discogs import (
+            _parse_discogs_search_response,
+        )
 
         assert _parse_discogs_search_response({"results": []}) is None
 
@@ -293,10 +339,6 @@ class TestDiscogs:
 # ===========================================================================
 # EnrichmentManager tests (2 tests)
 # ===========================================================================
-
-from unittest.mock import AsyncMock, patch
-
-from mlx_audiogen.library.enrichment.manager import EnrichmentManager
 
 
 @pytest.fixture
@@ -315,7 +357,11 @@ def manager():
 class TestEnrichmentManager:
     def test_enrich_musicbrainz_only(self, manager):
         """MusicBrainz is fetched without credentials; Last.fm/Discogs skipped."""
-        mb_result = {"tags": [{"name": "house"}], "genres": ["house"], "artist_mbid": "abc"}
+        mb_result = {
+            "tags": [{"name": "house"}],
+            "genres": ["house"],
+            "artist_mbid": "abc",
+        }
 
         async def run():
             with patch(
@@ -388,6 +434,7 @@ class TestEnrichmentManager:
                     {"artist": "B", "title": "Song2"},
                     {"artist": "C", "title": "Song3"},
                 ]
+
                 # Cancel after first track via progress callback
                 def on_prog(**kw):
                     completed.append(kw)

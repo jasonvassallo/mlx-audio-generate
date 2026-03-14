@@ -1,4 +1,5 @@
 """MusicBrainz recording search client."""
+
 from __future__ import annotations
 
 import logging
@@ -72,6 +73,7 @@ async def search_musicbrainz(
     owns_client = client is None
     if owns_client:
         client = create_client()
+    assert client is not None
 
     try:
         resp = await client.get(_BASE_URL, params=params)

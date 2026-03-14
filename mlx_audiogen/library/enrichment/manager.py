@@ -15,10 +15,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
 
-from .enrichment_db import EnrichmentDB
-from .musicbrainz import search_musicbrainz
-from .lastfm import search_lastfm
 from .discogs import search_discogs
+from .enrichment_db import EnrichmentDB
+from .lastfm import search_lastfm
+from .musicbrainz import search_musicbrainz
 from .rate_limiter import ApiRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,8 @@ class EnrichmentManager:
             containing the cached enrichment data or ``None``.
         """
         tid = self._db.get_or_create_track(
-            artist, title,
+            artist,
+            title,
             library_source=library_source,
             library_track_id=library_track_id,
         )
@@ -88,14 +89,17 @@ class EnrichmentManager:
                 if mb_data is not None:
                     self._db.store_musicbrainz(tid, mb_data)
             except Exception:
-                logger.exception("MusicBrainz enrichment failed for %s - %s", artist, title)
+                logger.exception(
+                    "MusicBrainz enrichment failed for %s - %s", artist, title
+                )
 
         # --- Last.fm (needs lastfm_api_key) ---
         lfm_key = self._cred.get("lastfm_api_key") if self._cred is not None else None
         if lfm_key is not None and (force or self._db.is_stale(tid, "lastfm")):
             try:
                 lfm_data = await search_lastfm(
-                    artist, title,
+                    artist,
+                    title,
                     api_key=lfm_key,
                     rate_limiter=self._lfm_limiter,
                 )
@@ -109,7 +113,8 @@ class EnrichmentManager:
         if dc_token is not None and (force or self._db.is_stale(tid, "discogs")):
             try:
                 dc_data = await search_discogs(
-                    artist, title,
+                    artist,
+                    title,
                     token=dc_token,
                     rate_limiter=self._dc_limiter,
                 )

@@ -1,4 +1,5 @@
 """Shared httpx async client factory for enrichment APIs."""
+
 from __future__ import annotations
 
 import httpx

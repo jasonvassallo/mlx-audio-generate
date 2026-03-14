@@ -32,6 +32,10 @@ from typing import Optional
 
 import numpy as np
 
+from mlx_audiogen.credentials import CredentialManager
+from mlx_audiogen.library.enrichment import EnrichmentDB, EnrichmentManager
+from mlx_audiogen.library.taste.engine import TasteEngine
+
 try:
     from fastapi import FastAPI, HTTPException, Request, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
@@ -100,13 +104,11 @@ _rate_limiter = RateLimiter()
 # Enrichment / Credential / Taste singletons (Phase 9g-3)
 # ---------------------------------------------------------------------------
 
-from mlx_audiogen.credentials import CredentialManager
-from mlx_audiogen.library.enrichment import EnrichmentDB, EnrichmentManager
-from mlx_audiogen.library.taste.engine import TasteEngine
-
 _credential_manager = CredentialManager()
 _enrichment_db = EnrichmentDB()
-_enrichment_manager = EnrichmentManager(db=_enrichment_db, credentials=_credential_manager)
+_enrichment_manager = EnrichmentManager(
+    db=_enrichment_db, credentials=_credential_manager
+)
 _taste_engine = TasteEngine()
 _enrichment_job: dict | None = None
 
@@ -1137,7 +1139,9 @@ def get_library_tracks(
     track_dicts = [t.to_dict() for t in tracks]
     for td in track_dicts:
         etid = _enrichment_db.find_by_library_id(source_type, td["track_id"])
-        td["enrichment_status"] = _enrichment_db.get_enrichment_status(etid) if etid else "none"
+        td["enrichment_status"] = (
+            _enrichment_db.get_enrichment_status(etid) if etid else "none"
+        )
 
     return {
         "tracks": track_dicts,
@@ -1382,7 +1386,9 @@ async def enrich_tracks(body: dict):
             if _enrichment_job:
                 _enrichment_job.update(kwargs)
 
-        await _enrichment_manager.enrich_batch(tracks_to_enrich, on_progress=on_progress)
+        await _enrichment_manager.enrich_batch(
+            tracks_to_enrich, on_progress=on_progress
+        )
         if _enrichment_job:
             _enrichment_job["status"] = "done"
 

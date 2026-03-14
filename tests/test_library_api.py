@@ -602,7 +602,9 @@ class TestCredentialEndpoints:
         assert res.status_code == 400
 
     def test_set_valid_service(self, client: TestClient):
-        res = client.post("/api/credentials/lastfm_api_key", json={"api_key": "test123"})
+        res = client.post(
+            "/api/credentials/lastfm_api_key", json={"api_key": "test123"}
+        )
         assert res.status_code == 200
         assert res.json()["status"] == "saved"
 

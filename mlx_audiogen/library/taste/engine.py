@@ -53,7 +53,9 @@ class TasteEngine:
         p.top_genres = [WeightedTag.from_dict(t) for t in signals["top_genres"]]
         p.top_artists = [WeightedTag.from_dict(t) for t in signals["top_artists"]]
         p.bpm_range = signals["bpm_range"]
-        p.key_preferences = [WeightedTag.from_dict(t) for t in signals["key_preferences"]]
+        p.key_preferences = [
+            WeightedTag.from_dict(t) for t in signals["key_preferences"]
+        ]
         p.era_distribution = signals["era_distribution"]
         p.mood_profile = [WeightedTag.from_dict(t) for t in signals["mood_profile"]]
         p.style_tags = [WeightedTag.from_dict(t) for t in signals["style_tags"]]
@@ -77,10 +79,14 @@ class TasteEngine:
 
         p.gen_genres = [WeightedTag.from_dict(t) for t in signals["gen_genres"]]
         p.gen_moods = [WeightedTag.from_dict(t) for t in signals["gen_moods"]]
-        p.gen_instruments = [WeightedTag.from_dict(t) for t in signals["gen_instruments"]]
+        p.gen_instruments = [
+            WeightedTag.from_dict(t) for t in signals["gen_instruments"]
+        ]
         p.kept_ratio = signals["kept_ratio"]
         p.avg_duration = signals["avg_duration"]
-        p.preferred_models = [WeightedTag.from_dict(t) for t in signals["preferred_models"]]
+        p.preferred_models = [
+            WeightedTag.from_dict(t) for t in signals["preferred_models"]
+        ]
         p.generation_count = len(history)
 
         p.save(self._path)
