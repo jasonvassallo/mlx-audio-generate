@@ -385,6 +385,10 @@ def _get_memory():
 
 _load_settings()
 
+# Restore LLM model path from persisted settings
+if _server_settings.get("llm_model"):
+    _llm_model_path = _server_settings["llm_model"]
+
 # ---------------------------------------------------------------------------
 # FastAPI App
 # ---------------------------------------------------------------------------
