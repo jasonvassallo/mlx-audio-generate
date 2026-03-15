@@ -125,7 +125,8 @@ mlx_audiogen/
 │   ├── config.py     # LoRAConfig dataclass + quick/balanced/deep profiles
 │   ├── inject.py     # LoRALinear class, apply_lora/remove_lora model surgery
 │   ├── dataset.py    # Audio scanning, chunking, delay pattern for training
-│   └── trainer.py    # Training loop with masked loss, early stopping, save/load
+│   ├── trainer.py    # Training loop with masked loss, early stopping, save/load
+│   └── flywheel.py   # FlywheelManager: star tracking, versioned adapters, blend datasets
 ├── library/          # Music library scanner (Phase 9g-2)
 │   ├── models.py     # TrackInfo, PlaylistInfo, LibrarySource dataclasses
 │   ├── parsers.py    # Apple Music (plistlib) + rekordbox (defusedxml) XML parsers
@@ -155,16 +156,16 @@ mlx_audiogen/
 web/                    # React + Vite + TypeScript SPA (dark/pro audio UI)
 ├── src/
 │   ├── api/client.ts   # Typed fetch wrappers + dynamic server URL (local or remote)
-│   ├── store/useStore.ts  # Zustand state: models, params, jobs, history, suggestions, presets, stems, serverUrl, library, collections
+│   ├── store/useStore.ts  # Zustand state: models, params, jobs, history, suggestions, presets, stems, serverUrl, library, collections, flywheel
 │   ├── hooks/useServerHeartbeat.ts  # Polls /api/health, reconnects on server URL change
 │   ├── components/
-│   │   ├── App.tsx          # Root layout: Header → sidebar + history/library → TransportBar
+│   │   ├── App.tsx          # Root layout: Header → resizable sidebar + history/library → TransportBar
 │   │   ├── TabBar.tsx       # Reusable tab header with active/inactive styling
 │   │   ├── TransportBar.tsx # DAW-style bottom bar: Master BPM, pitch mode, audio device, status
 │   │   ├── ServerPanel.tsx  # Remote server URL config + connection test + status indicator
 │   │   ├── SuggestPanel.tsx # Prompt analysis tags + suggestion cards + preset save/load
-│   │   ├── ParameterPanel.tsx  # Model-aware sliders + output_mode dropdown (audio/midi/both)
-│   │   ├── HistoryPanel.tsx    # Job history + MIDI download + stem separation with color-coded players
+│   │   ├── ParameterPanel.tsx  # Collapsible model-aware sliders + output_mode dropdown
+│   │   ├── HistoryPanel.tsx    # Job history + star rating + MIDI download + stem separation
 │   │   ├── LibraryPanel.tsx    # Library tab: source selector + playlist browser + sortable track table
 │   │   ├── MetadataEditor.tsx  # Modal: curate collection + AI descriptions + Save & Train
 │   │   ├── Header.tsx       # Logo + nav + PayPal support link
@@ -195,6 +196,8 @@ m4l/
 **Stable Audio 1.0 variant:** adds a `seconds_start` NumberEmbedder alongside `seconds_total`, auto-detected from conditioner weights at load time
 
 **HTDemucs (Demucs v4) pipeline flow:** stereo 44.1kHz audio -> STFT (numpy, n_fft=4096) -> complex-as-channels (interleaved: [R0, I0, R1, I1]) -> instance normalize -> parallel spectral U-Net (Conv2d, stride along frequency) + temporal U-Net (Conv1d, stride along time) with DConv residual branches -> CrossTransformerEncoder (5 layers, alternating self-attn and cross-attn between branches) -> parallel decoder U-Nets with skip connections -> spectral branch: CaC mask -> iSTFT; temporal branch: denormalize -> output = spectral + temporal -> 4 sources (drums, bass, other, vocals). For long audio, uses overlap-add with triangle window (25% overlap). Non-44.1kHz input is resampled via reflect-padded FFT sinc method (alias-free, no boundary artifacts); stems are resampled back to the original sample rate on output.
+
+**Flywheel intelligence flow:** user stars generations in History (★ button) → WAV + metadata saved to `~/.mlx-audiogen/kept/{adapter}/` → when star count hits threshold (default 10, configurable), auto-retrain builds cumulative dataset at blend ratio (default 80% library / 20% kept gens) → new adapter version created (`v1/`, `v2/`, ... with `active` symlink + `changelog.json`) → taste profile refreshed with flywheel signals (1.5x weight) → prompt suggestions improve → repeat cycle. Adapter versions are fully independent — each has own `lora.safetensors` + `config.json` + `changelog.json`. Flat-layout LoRAs auto-migrate to versioned on first access.
 
 **LoRA fine-tuning flow:** scan data dir (WAV + metadata.jsonl) → load & chunk audio (10s default, max 40s) → EnCodec encode → apply codebook delay pattern → freeze base model + inject LoRALinear wrappers (rank A/B matrices, B=zero-init) → teacher-forcing with causal mask → masked cross-entropy loss (only valid non-BOS positions) → AdamW on LoRA params only → save best checkpoint as lora.safetensors + config.json to `~/.mlx-audiogen/loras/`. At generation time: `apply_lora()` wraps targeted nn.Linear layers, `load_weights(strict=False)` loads A/B matrices, output = `base(x) + scale * (x @ A @ B)` where scale = alpha/rank.
 
@@ -275,6 +278,16 @@ m4l/
 | `POST` | `/api/taste/refresh` | Recompute taste profile from all signals |
 | `GET` | `/api/taste/suggestions` | Personalized prompt suggestions |
 | `PUT` | `/api/taste/overrides` | Manual taste preference overrides |
+| `POST` | `/api/star/{id}` | Star a generation (saves audio for flywheel re-training) |
+| `DELETE` | `/api/star/{id}` | Unstar a generation |
+| `GET` | `/api/flywheel/config` | Flywheel settings (threshold, blend, auto-retrain) |
+| `PUT` | `/api/flywheel/config` | Update flywheel settings |
+| `GET` | `/api/flywheel/status` | Stars since last train, threshold state |
+| `GET` | `/api/loras/{name}/versions` | List all adapter versions with changelog |
+| `GET` | `/api/loras/{name}/versions/{v}` | Full version changelog |
+| `PUT` | `/api/loras/{name}/active/{v}` | Set active adapter version (revert) |
+| `POST` | `/api/flywheel/retrain/{name}` | Manual re-train trigger |
+| `POST` | `/api/flywheel/reset/{name}` | Clear kept generations cache |
 
 Interactive API docs at `http://localhost:8420/docs` when running.
 
@@ -287,8 +300,9 @@ Interactive API docs at `http://localhost:8420/docs` when running.
 - **Dev mode**: `npm run dev` starts Vite on :3000, proxies `/api/*` to FastAPI on :8420
 - **Production**: `npm run build` outputs to `web/dist/`, served by FastAPI's static file mount
 - **Layout**: Header → sidebar (5 tabs: Generate/Suggest/Train/Library/Settings, w-80) + main area (history or track table) → TransportBar (BPM/pitch/device/status/progress)
-- **Components**: TabBar, TransportBar, ServerPanel, SuggestPanel (analysis tags + presets), ParameterPanel (sliders + output_mode), GenerateButton, AudioPlayer (waveform + setSinkId), HistoryPanel (jobs + MIDI + stems), LibraryPanel (sidebar playlists + sortable track table + Generate Like This / Train on These), MetadataEditor (collection curation + AI descriptions), AudioDeviceSelector, Header, EnhancePreview, TagAutocomplete, LLMSettingsPanel, LoRASelector, TrainPanel (folder/collection source + profiles + progress + loss chart)
-- **State**: Zustand store manages models, params, jobs, history, suggestions, presets, stems, output_mode, tabs, enhance flow, settings, tags, memory, LLM, server URL, LoRAs, library (sources/playlists/tracks with search/sort/filter), collections, and "Generate Like This" results
+- **Components**: TabBar, TransportBar, ServerPanel, SuggestPanel (analysis tags + presets), ParameterPanel (collapsible sliders + output_mode), GenerateButton, AudioPlayer (waveform + setSinkId), HistoryPanel (jobs + star rating + MIDI + stems), LibraryPanel (sidebar playlists + sortable track table + Generate Like This / Train on These), MetadataEditor (collection curation + AI descriptions), AudioDeviceSelector, Header, EnhancePreview, TagAutocomplete, LLMSettingsPanel, LoRASelector, TrainPanel (folder/collection source + profiles + progress + loss chart), FlywheelSettings (auto-retrain toggle + threshold + blend slider + changelog viewer)
+- **State**: Zustand store manages models, params, jobs, history, suggestions, presets, stems, output_mode, tabs, enhance flow, settings, tags, memory, LLM, server URL, LoRAs, library (sources/playlists/tracks with search/sort/filter), collections, "Generate Like This" results, and flywheel config/status
+- **Sidebar**: Resizable (drag handle, 280-480px, persisted to localStorage), collapsible parameter sections with summary lines
 - **Prompt Suggestions**: UI shows colored analysis tags + suggestion cards with Use/Copy buttons
 - **Presets**: `.mlxpreset` JSON files in `~/.mlx-audiogen/presets/`. Name validated with `^[a-zA-Z0-9_-]{1,64}$`
 - **Stem Separation**: Color-coded inline `<audio>` players. Blob URLs eagerly downloaded to survive server's 5-minute cleanup
