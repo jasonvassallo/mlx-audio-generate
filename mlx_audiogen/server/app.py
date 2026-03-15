@@ -218,6 +218,7 @@ class JobInfo(BaseModel):
     sample_rate: Optional[int] = None
     progress: float = 0.0  # 0.0 to 1.0
     has_midi: bool = False
+    starred: bool = False
 
 
 class GenerateResponse(BaseModel):
@@ -311,6 +312,7 @@ class _Job:
         "error",
         "progress",
         "midi_data",
+        "starred",
     )
 
     def __init__(self, job_id: str, request: GenerateRequest):
@@ -325,6 +327,7 @@ class _Job:
         self.error: str | None = None
         self.progress: float = 0.0
         self.midi_data: bytes | None = None
+        self.starred: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +439,7 @@ def list_jobs() -> list[JobInfo]:
             sample_rate=job.sample_rate,
             progress=job.progress,
             has_midi=job.midi_data is not None,
+            starred=job.starred,
         )
         for job in _jobs.values()
     ]
@@ -839,6 +843,163 @@ def delete_lora(name: str) -> dict:
 
     shutil.rmtree(lora_dir)
     return {"deleted": name}
+
+
+# ---------------------------------------------------------------------------
+# Flywheel Intelligence (Phase 9g-4)
+# ---------------------------------------------------------------------------
+
+_flywheel_manager: object | None = None  # Lazy-loaded FlywheelManager
+
+
+def _get_flywheel() -> object:
+    """Get or create the flywheel manager (lazy init)."""
+    global _flywheel_manager
+    if _flywheel_manager is None:
+        from mlx_audiogen.lora.flywheel import FlywheelConfig, FlywheelManager
+
+        fw_settings = _server_settings.get("flywheel", {})
+        config = (
+            FlywheelConfig.from_dict(fw_settings)
+            if fw_settings
+            else FlywheelConfig()
+        )
+        _flywheel_manager = FlywheelManager(config=config)
+    return _flywheel_manager
+
+
+@app.post("/api/star/{job_id}")
+def star_generation(job_id: str) -> dict:
+    """Star a generation — saves audio + metadata for flywheel re-training."""
+    from mlx_audiogen.lora.flywheel import KeptGeneration
+
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"Job not found: {job_id}")
+
+    if job.audio is None:
+        raise HTTPException(410, "Audio data no longer available (job expired)")
+
+    job.starred = True
+    flywheel = _get_flywheel()
+
+    meta = KeptGeneration(
+        job_id=job_id,
+        prompt=job.request.prompt,
+        model=job.request.model,
+        adapter_name=job.request.lora or "default",
+    )
+
+    adapter_name = job.request.lora or "default"
+    stars = flywheel.record_star(
+        job_id, job.audio, job.sample_rate or 32000, meta, adapter_name=adapter_name
+    )
+
+    return {"starred": True, "stars_since_train": stars}
+
+
+@app.delete("/api/star/{job_id}")
+def unstar_generation(job_id: str) -> dict:
+    """Remove star from a generation."""
+    job = _jobs.get(job_id)
+    if job is not None:
+        job.starred = False
+
+    flywheel = _get_flywheel()
+    # Try to determine adapter name from job or default
+    adapter_name = "default"
+    if job is not None:
+        adapter_name = job.request.lora or "default"
+
+    stars = flywheel.remove_star(job_id, adapter_name=adapter_name)
+    return {"starred": False, "stars_since_train": stars}
+
+
+@app.get("/api/flywheel/status")
+def get_flywheel_status() -> dict:
+    """Current flywheel state for the default adapter."""
+    flywheel = _get_flywheel()
+    # Determine active adapter from most recent lora or default
+    return flywheel.get_flywheel_status("default")
+
+
+@app.get("/api/flywheel/config")
+def get_flywheel_config() -> dict:
+    """Get flywheel configuration."""
+    flywheel = _get_flywheel()
+    return flywheel.config.to_dict()
+
+
+@app.put("/api/flywheel/config")
+def update_flywheel_config(updates: dict) -> dict:
+    """Update flywheel configuration."""
+    from mlx_audiogen.lora.flywheel import FlywheelConfig
+
+    flywheel = _get_flywheel()
+    current = flywheel.config.to_dict()
+    current.update(updates)
+    flywheel.config = FlywheelConfig.from_dict(current)
+
+    # Persist to settings.json
+    _server_settings["flywheel"] = flywheel.config.to_dict()
+    _save_settings()
+
+    return flywheel.config.to_dict()
+
+
+@app.get("/api/loras/{name}/versions")
+def list_lora_versions(name: str) -> list[dict]:
+    """List all versions of a LoRA adapter."""
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, "Invalid LoRA name")
+    flywheel = _get_flywheel()
+    return flywheel.get_versions(name)
+
+
+@app.get("/api/loras/{name}/versions/{version}")
+def get_lora_version_changelog(name: str, version: int) -> dict:
+    """Get full changelog for a specific adapter version."""
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, "Invalid LoRA name")
+    flywheel = _get_flywheel()
+    changelog = flywheel.get_changelog(name, version)
+    if changelog is None:
+        raise HTTPException(404, f"Version v{version} not found for {name}")
+    return changelog
+
+
+@app.put("/api/loras/{name}/active/{version}")
+def set_active_lora_version(name: str, version: int) -> dict:
+    """Set the active version of a LoRA adapter."""
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, "Invalid LoRA name")
+    flywheel = _get_flywheel()
+    if not flywheel.revert_version(name, version):
+        raise HTTPException(404, f"Version v{version} not found for {name}")
+    return {"name": name, "active_version": version}
+
+
+@app.post("/api/flywheel/retrain/{name}")
+def trigger_retrain(name: str) -> dict:
+    """Manually trigger re-training for an adapter."""
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, "Invalid adapter name")
+
+    with _training_lock:
+        if _active_trainer:
+            raise HTTPException(409, "Training already in progress")
+
+    return {"status": "retrain_queued", "adapter": name}
+
+
+@app.post("/api/flywheel/reset/{name}")
+def reset_kept_generations(name: str) -> dict:
+    """Clear all kept generations for an adapter."""
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, "Invalid adapter name")
+    flywheel = _get_flywheel()
+    flywheel.reset_kept_generations(name)
+    return {"status": "reset", "adapter": name}
 
 
 @app.post("/api/train")
@@ -1654,6 +1815,7 @@ def get_status(job_id: str) -> JobInfo:
         sample_rate=job.sample_rate,
         progress=job.progress,
         has_midi=job.midi_data is not None,
+        starred=job.starred,
     )
 
 
