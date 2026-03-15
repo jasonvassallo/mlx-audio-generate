@@ -28,7 +28,10 @@ from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
 from threading import Lock
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from mlx_audiogen.lora.flywheel import FlywheelManager
 
 import numpy as np
 
@@ -849,10 +852,10 @@ def delete_lora(name: str) -> dict:
 # Flywheel Intelligence (Phase 9g-4)
 # ---------------------------------------------------------------------------
 
-_flywheel_manager: object | None = None  # Lazy-loaded FlywheelManager
+_flywheel_manager: "FlywheelManager | None" = None
 
 
-def _get_flywheel() -> object:
+def _get_flywheel() -> "FlywheelManager":
     """Get or create the flywheel manager (lazy init)."""
     global _flywheel_manager
     if _flywheel_manager is None:
@@ -860,9 +863,7 @@ def _get_flywheel() -> object:
 
         fw_settings = _server_settings.get("flywheel", {})
         config = (
-            FlywheelConfig.from_dict(fw_settings)
-            if fw_settings
-            else FlywheelConfig()
+            FlywheelConfig.from_dict(fw_settings) if fw_settings else FlywheelConfig()
         )
         _flywheel_manager = FlywheelManager(config=config)
     return _flywheel_manager

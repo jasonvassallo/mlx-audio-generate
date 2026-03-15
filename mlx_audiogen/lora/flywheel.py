@@ -445,9 +445,7 @@ class FlywheelManager:
         logger.info("Created %s v%d", adapter_name, version)
         return version
 
-    def _parent_kept_count(
-        self, adapter_name: str, parent_version: int
-    ) -> int:
+    def _parent_kept_count(self, adapter_name: str, parent_version: int) -> int:
         """Get kept_generations count from a parent version's changelog."""
         changelog = self.get_changelog(adapter_name, parent_version)
         if changelog:
@@ -455,9 +453,7 @@ class FlywheelManager:
             return dataset.get("kept_generations", 0)
         return 0
 
-    def _update_active_symlink(
-        self, adapter_name: str, version: int
-    ) -> None:
+    def _update_active_symlink(self, adapter_name: str, version: int) -> None:
         """Update the active symlink to point to the given version."""
         adapter_dir = self._adapter_dir(adapter_name)
         active_link = adapter_dir / "active"

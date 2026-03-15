@@ -156,8 +156,7 @@ def list_available_loras(
 
             # Count versions
             versions = [
-                sub for sub in d.iterdir()
-                if sub.is_dir() and sub.name.startswith("v")
+                sub for sub in d.iterdir() if sub.is_dir() and sub.name.startswith("v")
             ]
             active_version = None
             active_link = d / "active"

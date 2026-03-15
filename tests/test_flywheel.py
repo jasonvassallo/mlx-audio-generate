@@ -1,9 +1,6 @@
 """Tests for the flywheel intelligence module (Phase 9g-4)."""
 
 import json
-import os
-import shutil
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -80,7 +77,9 @@ class TestFlywheelConfig:
 
 
 class TestRecordStar:
-    def test_record_star_saves_wav_and_json(self, tmp_flywheel, sample_audio, sample_metadata):
+    def test_record_star_saves_wav_and_json(
+        self, tmp_flywheel, sample_audio, sample_metadata
+    ):
         count = tmp_flywheel.record_star(
             "job1", sample_audio, 16000, sample_metadata, adapter_name="my-style"
         )
@@ -103,7 +102,9 @@ class TestRecordStar:
         assert count == 1
         assert (tmp_flywheel.kept_dir / "my-style" / "gen_job2.wav").exists()
 
-    def test_remove_star_deletes_files(self, tmp_flywheel, sample_audio, sample_metadata):
+    def test_remove_star_deletes_files(
+        self, tmp_flywheel, sample_audio, sample_metadata
+    ):
         tmp_flywheel.record_star(
             "job1", sample_audio, 16000, sample_metadata, adapter_name="my-style"
         )
@@ -117,7 +118,9 @@ class TestRecordStar:
     def test_star_count_increments(self, tmp_flywheel, sample_audio):
         for i in range(5):
             meta = KeptGeneration(
-                job_id=f"j{i}", prompt=f"prompt {i}", model="musicgen",
+                job_id=f"j{i}",
+                prompt=f"prompt {i}",
+                model="musicgen",
                 adapter_name="my-style",
             )
             count = tmp_flywheel.record_star(
@@ -136,13 +139,17 @@ class TestThreshold:
         meta = KeptGeneration(
             job_id="j1", prompt="test", model="musicgen", adapter_name="my-style"
         )
-        tmp_flywheel.record_star("j1", sample_audio, 16000, meta, adapter_name="my-style")
+        tmp_flywheel.record_star(
+            "j1", sample_audio, 16000, meta, adapter_name="my-style"
+        )
         assert not tmp_flywheel.check_threshold("my-style")
 
     def test_at_threshold(self, tmp_flywheel, sample_audio):
         for i in range(3):  # threshold is 3
             meta = KeptGeneration(
-                job_id=f"j{i}", prompt="test", model="musicgen",
+                job_id=f"j{i}",
+                prompt="test",
+                model="musicgen",
                 adapter_name="my-style",
             )
             tmp_flywheel.record_star(
@@ -154,7 +161,9 @@ class TestThreshold:
         tmp_flywheel.config.auto_retrain = False
         for i in range(5):
             meta = KeptGeneration(
-                job_id=f"j{i}", prompt="test", model="musicgen",
+                job_id=f"j{i}",
+                prompt="test",
+                model="musicgen",
                 adapter_name="my-style",
             )
             tmp_flywheel.record_star(
@@ -173,7 +182,9 @@ class TestTasteRefresh:
         tmp_flywheel.config.taste_refresh_interval = 2
         for i in range(2):
             meta = KeptGeneration(
-                job_id=f"j{i}", prompt="test", model="musicgen",
+                job_id=f"j{i}",
+                prompt="test",
+                model="musicgen",
                 adapter_name="my-style",
             )
             tmp_flywheel.record_star(
@@ -202,14 +213,18 @@ class TestBuildDataset:
         # Add 3 kept generations
         for i in range(3):
             meta = KeptGeneration(
-                job_id=f"j{i}", prompt=f"kept prompt {i}", model="musicgen",
+                job_id=f"j{i}",
+                prompt=f"kept prompt {i}",
+                model="musicgen",
                 adapter_name="test",
             )
             tmp_flywheel.record_star(
                 f"j{i}", sample_audio, 16000, meta, adapter_name="test"
             )
 
-        library = [{"file": f"/lib/{i}.wav", "text": f"lib track {i}"} for i in range(7)]
+        library = [
+            {"file": f"/lib/{i}.wav", "text": f"lib track {i}"} for i in range(7)
+        ]
 
         dataset = tmp_flywheel.build_dataset("test", library)
         assert len(dataset) > 0
@@ -262,27 +277,32 @@ class TestVersioning:
         with open(v_dir / "config.json", "w") as f:
             json.dump({"name": name, "rank": 16}, f)
         with open(v_dir / "changelog.json", "w") as f:
-            json.dump({
-                "version": version,
-                "created_at": "2026-03-14T00:00:00Z",
-                "parent_version": version - 1 if version > 1 else None,
-                "dataset": {
-                    "library_tracks": 10, "kept_generations": version * 3,
-                    "blend_ratio": {"library": 80, "generations": 20},
-                    "total_training_samples": 10 + version * 3,
+            json.dump(
+                {
+                    "version": version,
+                    "created_at": "2026-03-14T00:00:00Z",
+                    "parent_version": version - 1 if version > 1 else None,
+                    "dataset": {
+                        "library_tracks": 10,
+                        "kept_generations": version * 3,
+                        "blend_ratio": {"library": 80, "generations": 20},
+                        "total_training_samples": 10 + version * 3,
+                    },
+                    "top_influences": {"genre": [], "mood": [], "instrument": []},
+                    "new_since_parent": {
+                        "kept_generations_added": 3,
+                        "enrichment_tags_added": 0,
+                        "library_tracks_added": 0,
+                    },
+                    "training": {
+                        "profile": "balanced",
+                        "epochs": 20,
+                        "best_loss": 0.5 - version * 0.05,
+                        "duration_seconds": 120.0,
+                    },
                 },
-                "top_influences": {"genre": [], "mood": [], "instrument": []},
-                "new_since_parent": {
-                    "kept_generations_added": 3,
-                    "enrichment_tags_added": 0,
-                    "library_tracks_added": 0,
-                },
-                "training": {
-                    "profile": "balanced", "epochs": 20,
-                    "best_loss": 0.5 - version * 0.05,
-                    "duration_seconds": 120.0,
-                },
-            }, f)
+                f,
+            )
         # Create lora.safetensors placeholder
         (v_dir / "lora.safetensors").touch()
         return v_dir
@@ -431,6 +451,8 @@ class TestFlywheelStatus:
         meta = KeptGeneration(
             job_id="j0", prompt="test", model="musicgen", adapter_name="my-style"
         )
-        tmp_flywheel.record_star("j0", sample_audio, 16000, meta, adapter_name="my-style")
+        tmp_flywheel.record_star(
+            "j0", sample_audio, 16000, meta, adapter_name="my-style"
+        )
         status = tmp_flywheel.get_flywheel_status("my-style")
         assert status["stars_since_train"] == 1
